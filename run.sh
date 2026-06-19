@@ -15,8 +15,8 @@ echo -e "${BLUE}======================================================${NC}"
 # 1. Start/Verify MySQL Server
 echo -e "${YELLOW}[1/4] Checking MySQL status...${NC}"
 if ! pgrep -x "mysqld" > /dev/null; then
-    echo -e "${YELLOW}MySQL not running. Starting via brew services...${NC}"
-    brew services start mysql
+    echo -e "${YELLOW}MySQL not running. Starting via systemctl...${NC}"
+    sudo systemctl start mysql
     sleep 3
 else
     echo -e "${GREEN}[✓] MySQL server is already running.${NC}"
@@ -24,9 +24,13 @@ fi
 
 # 2. Database Import
 echo -e "${YELLOW}[2/4] Applying SQL DDL Schema...${NC}"
-/opt/homebrew/bin/mysql -u root -e "CREATE DATABASE IF NOT EXISTS employee_activity_db;"
+sudo mysql -e "CREATE DATABASE IF NOT EXISTS employee_activity_db;"
+sudo mysql -e "CREATE USER IF NOT EXISTS 'employee_app'@'localhost' IDENTIFIED BY 'aurasense_pass';"
+sudo mysql -e "GRANT ALL PRIVILEGES ON employee_activity_db.* TO 'employee_app'@'localhost';"
+sudo mysql -e "FLUSH PRIVILEGES;"
+
 if [ $? -eq 0 ]; then
-    /opt/homebrew/bin/mysql -u root employee_activity_db < schema.sql
+    mysql -u employee_app -paurasense_pass employee_activity_db < schema.sql
     echo -e "${GREEN}[✓] Database schema successfully verified/imported.${NC}"
 else
     echo -e "${RED}[✗] Failed to configure MySQL database database connection.${NC}"
@@ -34,7 +38,7 @@ fi
 
 # 3. Running Diagnostics Verification
 echo -e "${YELLOW}[3/4] Running diagnostic verification...${NC}"
-./venv/bin/python validate_setup.py
+python3 validate_setup.py
 if [ $? -ne 0 ]; then
     echo -e "${RED}[✗] Diagnostics failed. Please resolve dependencies or database issues.${NC}"
     exit 1
@@ -47,7 +51,7 @@ echo -e "${BLUE}Press Ctrl+C to stop the monitoring system.${NC}"
 echo ""
 
 # Wait a second, and launch dashboard in browser
-(sleep 2 && open http://localhost:8000/) &
+(sleep 2 && xdg-open http://localhost:8000/) &
 
 cd backend
-../venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload

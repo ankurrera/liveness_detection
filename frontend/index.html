@@ -5,13 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AuraSense - Operational Activity Monitor</title>
     
-    <!-- Google Fonts: Inter for professional typography -->
+    <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    
-    <!-- FontAwesome Icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -26,46 +23,48 @@
         <header class="app-header">
             <div class="header-left">
                 <div class="logo">
-                    <span class="logo-symbol">■</span>
-                    <h2>AURA<span>SENSE</span></h2>
-                    <span class="system-tag">OPERATIONAL MONITOR</span>
+                    <span class="logo-symbol">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 22h20L12 2z"/></svg>
+                    </span>
+                    <h2>AuraSense</h2>
+                    <span class="system-tag">Workspace</span>
                 </div>
             </div>
             
             <div class="header-right">
                 <div class="subject-selector-wrapper">
-                    <span>MONITOR SUBJECT:</span>
+                    <span>Subject:</span>
                     <select id="employeeSelect" class="subject-select">
                         <!-- Options populated dynamically from DB -->
                     </select>
                 </div>
                 <div class="connection-status">
                     <span class="status-dot green"></span>
-                    <span>DB ONLINE</span>
+                    <span>Connected</span>
                 </div>
             </div>
         </header>
 
-        <!-- Top Row Metrics Banner (Flat, Dense, Numeric) -->
+        <!-- Top Row Metrics Banner -->
         <section class="metrics-banner">
             <div class="metric-block" id="block-status">
-                <span class="block-label">CURRENT STATUS</span>
+                <span class="block-label">Current Status</span>
                 <span class="block-val" id="metric-status">ABSENT</span>
             </div>
             <div class="metric-block">
-                <span class="block-label">WORKING TIME</span>
+                <span class="block-label">Working Time</span>
                 <span class="block-val mono" id="metric-working">00:00:00</span>
             </div>
             <div class="metric-block">
-                <span class="block-label">IDLE TIME</span>
+                <span class="block-label">Idle Time</span>
                 <span class="block-val mono" id="metric-idle">00:00:00</span>
             </div>
             <div class="metric-block">
-                <span class="block-label">ABSENT TIME</span>
+                <span class="block-label">Absent Time</span>
                 <span class="block-val mono" id="metric-absent">00:00:00</span>
             </div>
             <div class="metric-block">
-                <span class="block-label">PRODUCTIVITY INDEX</span>
+                <span class="block-label">Productivity Index</span>
                 <span class="block-val" id="metric-productivity">0.0%</span>
             </div>
         </section>
@@ -77,14 +76,14 @@
             <div class="layout-left">
                 <div class="panel live-feed-panel">
                     <div class="panel-header">
-                        <h4><span class="indicator-dot red-pulse"></span> LIVE FEED</h4>
+                        <h4>Live Feed</h4>
                         <span class="feed-resolution">640x480 | 25 FPS</span>
                     </div>
                     <div class="feed-container">
                         <img id="videoFeed" src="/api/video_feed" alt="Video stream loading...">
                         <div class="feed-overlay">
-                            <span class="overlay-badge" id="feed-mode">WEBCAM ACTIVE</span>
-                            <span class="overlay-badge" id="feed-confidence">CONF: 0%</span>
+                            <span class="overlay-badge" id="feed-mode">Webcam Active</span>
+                            <span class="overlay-badge" id="feed-confidence">Conf: 0%</span>
                         </div>
                     </div>
                 </div>
@@ -94,7 +93,7 @@
             <div class="layout-center">
                 <div class="panel timeline-panel">
                     <div class="panel-header">
-                        <h4>TODAY'S ACTIVITY SEGMENTS</h4>
+                        <h4>Today's Activity Segments</h4>
                     </div>
                     <div class="timeline-container">
                         <div class="timeline-list" id="timeline-list">
@@ -111,7 +110,7 @@
             <div class="layout-right">
                 <div class="panel chart-panel">
                     <div class="panel-header">
-                        <h4>TIME DISTRIBUTION</h4>
+                        <h4>Time Distribution</h4>
                     </div>
                     <div class="chart-wrapper">
                         <canvas id="timeSplitChart"></canvas>
@@ -120,7 +119,7 @@
 
                 <div class="panel shift-summary-panel">
                     <div class="panel-header">
-                        <h4>SHIFT SUMMARY</h4>
+                        <h4>Shift Summary</h4>
                     </div>
                     <div class="summary-details">
                         <div class="summary-row">
@@ -147,18 +146,18 @@
             <div class="layout-bottom">
                 <div class="panel logs-panel">
                     <div class="panel-header">
-                        <h4>RECENT STATE SESSION RECORDS (DATABASE TRANSACTION LOG)</h4>
+                        <h4>Recent Session Records</h4>
                     </div>
                     <div class="table-container">
                         <table class="logs-table">
                             <thead>
                                 <tr>
-                                    <th>START TIME</th>
-                                    <th>END TIME</th>
-                                    <th>STATUS</th>
-                                    <th>DURATION</th>
-                                    <th>CONFIDENCE</th>
-                                    <th>SYSTEM NOTES</th>
+                                    <th>Start Time</th>
+                                    <th>End Time</th>
+                                    <th>Status</th>
+                                    <th>Duration</th>
+                                    <th>Confidence</th>
+                                    <th>Notes</th>
                                 </tr>
                             </thead>
                             <tbody id="logs-table-body">
@@ -176,7 +175,7 @@
             <div class="layout-debug">
                 <div class="panel debug-panel">
                     <div class="panel-header">
-                        <h4>DEVELOPER DIAGNOSTICS & CV CALIBRATION</h4>
+                        <h4>Developer Diagnostics</h4>
                     </div>
                     <div class="debug-grid">
                         <div class="debug-item">
@@ -184,7 +183,7 @@
                             <span class="debug-val mono" id="debug-raw-score">0.000</span>
                         </div>
                         <div class="debug-item">
-                            <span class="debug-label">Smoothed Score (150 Frames)</span>
+                            <span class="debug-label">Smoothed Score</span>
                             <span class="debug-val mono" id="debug-smoothed-score">0.000</span>
                         </div>
                         <div class="debug-item">
@@ -196,7 +195,7 @@
                             <span class="debug-val mono" id="debug-idle-cd">60s</span>
                         </div>
                         <div class="debug-item">
-                            <span class="debug-label">Epsilon Jitter Filter</span>
+                            <span class="debug-label">Epsilon Jitter</span>
                             <span class="debug-val mono" id="debug-epsilon">0.0015</span>
                         </div>
                     </div>

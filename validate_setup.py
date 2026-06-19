@@ -39,6 +39,8 @@ def check_dependencies():
 def check_database():
     print("\nStep 2: Checking MySQL Database Connectivity...")
     try:
+        import dotenv
+        dotenv.load_dotenv("backend/.env")
         from sqlalchemy import inspect
         from app.database import engine, SessionLocal
         from app.models import Employee, ActivityLog, DailySummary
