@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import time
 import threading
+import mediapipe as mp
 from ultralytics import YOLO
 from collections import deque
 from app.database import SessionLocal
@@ -235,6 +236,16 @@ class CVMonitor:
             self.is_mock = True
             yolo_model = None
 
+        # 3.5 Setup Mediapipe Face Mesh
+        mp_face_mesh = mp.solutions.face_mesh
+        face_mesh = mp_face_mesh.FaceMesh(
+            static_image_mode=False,
+            max_num_faces=1,
+            refine_landmarks=True,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
+        )
+
         prev_time = time.time()
 
         # Main processing loop
@@ -271,8 +282,11 @@ class CVMonitor:
                     frame = cv2.flip(frame, 1)
                     h, w, c = frame.shape
 
-                    # Convert to RGB for YOLOv8
+                    # Convert to RGB for YOLOv8 and Mediapipe
                     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    
+                    # Run Mediapipe Face Mesh
+                    face_results = face_mesh.process(rgb_frame)
                     
                     # Run detections using YOLOv8
                     if yolo_model is None:
@@ -419,15 +433,7 @@ class CVMonitor:
                         self._draw_hand_skeleton(frame, self.smoothed_kp_xy[10], self.smoothed_kp_xy[8], kp_conf[10], kp_conf[8]) # Right hand
 
                         # Draw sleek, thin face skeleton mesh
-                        self._draw_face_mesh(
-                            frame,
-                            self.smoothed_kp_xy[0],  # Nose
-                            self.smoothed_kp_xy[3],  # Left Ear
-                            self.smoothed_kp_xy[4],  # Right Ear
-                            self.smoothed_kp_xy[1],  # Left Eye
-                            self.smoothed_kp_xy[2],  # Right Eye
-                            kp_conf[0], kp_conf[3], kp_conf[4], kp_conf[1], kp_conf[2]
-                        )
+                        self._draw_face_mesh(frame, face_results)
 
                 # Process blink transitions & reset countdown
                 if is_blinking:
@@ -586,6 +592,8 @@ class CVMonitor:
             if not self.is_mock:
                 cap.release()
             
+            face_mesh.close()
+            
             db = SessionLocal()
             try:
                 close_active_session(db, self.active_employee_id)
@@ -680,226 +688,39 @@ class CVMonitor:
             for i in range(len(knuckles) - 1):
                 cv2.line(frame, knuckles[i], knuckles[i+1], (235, 235, 235), 1)
 
-    def _draw_face_mesh(self, frame, nose, ear_l, ear_r, eye_l, eye_r, nose_conf, ear_l_conf, ear_r_conf, eye_l_conf, eye_r_conf):
-        if nose_conf > 0.3 and ear_l_conf > 0.3 and ear_r_conf > 0.3:
-            # Main keypoints as floats
-            n_x, n_y = float(nose[0]), float(nose[1])
-            el_x, el_y = float(ear_l[0]), float(ear_l[1])
-            er_x, er_y = float(ear_r[0]), float(ear_r[1])
+    def _draw_face_mesh(self, frame, face_results):
+        if not face_results or not face_results.multi_face_landmarks:
+            return
             
-            # Use eyes if confidence is good, otherwise fallback to estimates
-            if eye_l_conf > 0.3:
-                eyel_x, eyel_y = float(eye_l[0]), float(eye_l[1])
-            else:
-                eyel_x = el_x * 0.4 + n_x * 0.6
-                eyel_y = el_y * 0.3 + n_y * 0.7 - 20
-                
-            if eye_r_conf > 0.3:
-                eyer_x, eyer_y = float(eye_r[0]), float(eye_r[1])
-            else:
-                eyer_x = er_x * 0.4 + n_x * 0.6
-                eyer_y = er_y * 0.3 + n_y * 0.7 - 20
-
-            # 1. Midpoints & Distance Scales
-            mid_eye_x = (eyel_x + eyer_x) / 2.0
-            mid_eye_y = (eyel_y + eyer_y) / 2.0
-            
-            # Vectors
-            eye_dx = eyer_x - eyel_x
-            eye_dy = eyer_y - eyel_y
-            eye_dist = np.sqrt(eye_dx**2 + eye_dy**2) + 1e-6
-            
-            # Vertical face direction (mid-eye to nose vector)
-            v_x = n_x - mid_eye_x
-            v_y = n_y - mid_eye_y
-            v_dist = np.sqrt(v_x**2 + v_y**2) + 1e-6
-            
-            # Normalised vertical vector
-            nv_x = v_x / v_dist
-            nv_y = v_y / v_dist
-            
-            # Normalised horizontal vector (perpendicular to vertical)
-            nh_x = -nv_y
-            nh_y = nv_x
-            
-            # 2. Define Procedural Face Grid Points (x, y)
-            # Forehead / hairline
-            f_mid = (int(mid_eye_x - nv_x * v_dist * 0.95), int(mid_eye_y - nv_y * v_dist * 0.95))
-            f_l = (int(eyel_x - nv_x * v_dist * 0.90), int(eyel_y - nv_y * v_dist * 0.90))
-            f_r = (int(eyer_x - nv_x * v_dist * 0.90), int(eyer_y - nv_y * v_dist * 0.90))
-            
-            # Eyebrows
-            eb_l_mid = (int(eyel_x - nv_x * v_dist * 0.35), int(eyel_y - nv_y * v_dist * 0.35))
-            eb_l_inner = (int(mid_eye_x - nv_x * v_dist * 0.38 - nh_x * eye_dist * 0.15), int(mid_eye_y - nv_y * v_dist * 0.38 - nh_y * eye_dist * 0.15))
-            eb_l_outer = (int(eyel_x - nv_x * v_dist * 0.30 + nh_x * eye_dist * 0.20), int(eyel_y - nv_y * v_dist * 0.30 + nh_y * eye_dist * 0.20))
-            
-            eb_r_mid = (int(eyer_x - nv_x * v_dist * 0.35), int(eyer_y - nv_y * v_dist * 0.35))
-            eb_r_inner = (int(mid_eye_x - nv_x * v_dist * 0.38 + nh_x * eye_dist * 0.15), int(mid_eye_y - nv_y * v_dist * 0.38 + nh_y * eye_dist * 0.15))
-            eb_r_outer = (int(eyer_x - nv_x * v_dist * 0.30 - nh_x * eye_dist * 0.20), int(eyer_y - nv_y * v_dist * 0.30 - nh_y * eye_dist * 0.20))
-            
-            # Nose bridge structure
-            bridge_top = (int(mid_eye_x), int(mid_eye_y))
-            bridge_mid = (int(mid_eye_x + nv_x * v_dist * 0.5), int(mid_eye_y + nv_y * v_dist * 0.5))
-            nose_tip = (int(n_x), int(n_y))
-            nose_l = (int(n_x + nh_x * eye_dist * 0.22), int(n_y + nh_y * eye_dist * 0.22))
-            nose_r = (int(n_x - nh_x * eye_dist * 0.22), int(n_y - nh_y * eye_dist * 0.22))
-            
-            # Eye orbits detail (diamonds around pupils)
-            le_top = (int(eyel_x - nv_x * v_dist * 0.18), int(eyel_y - nv_y * v_dist * 0.18))
-            le_bottom = (int(eyel_x + nv_x * v_dist * 0.18), int(eyel_y + nv_y * v_dist * 0.18))
-            le_inner = (int(eyel_x - nh_x * eye_dist * 0.22), int(eyel_y - nh_y * eye_dist * 0.22))
-            le_outer = (int(eyel_x + nh_x * eye_dist * 0.22), int(eyel_y + nh_y * eye_dist * 0.22))
-            
-            re_top = (int(eyer_x - nv_x * v_dist * 0.18), int(eyer_y - nv_y * v_dist * 0.18))
-            re_bottom = (int(eyer_x + nv_x * v_dist * 0.18), int(eyer_y + nv_y * v_dist * 0.18))
-            re_inner = (int(eyer_x + nh_x * eye_dist * 0.22), int(eyer_y + nh_y * eye_dist * 0.22))
-            re_outer = (int(eyer_x - nh_x * eye_dist * 0.22), int(eyer_y - nh_y * eye_dist * 0.22))
-            
-            # Cheeks
-            cheek_l = (int(eyel_x + nv_x * v_dist * 0.55 + nh_x * eye_dist * 0.12), int(eyel_y + nv_y * v_dist * 0.55 + nh_y * eye_dist * 0.12))
-            cheek_r = (int(eyer_x + nv_x * v_dist * 0.55 - nh_x * eye_dist * 0.12), int(eyer_y + nv_y * v_dist * 0.55 - nh_y * eye_dist * 0.12))
-            
-            # Mouth / Lips
-            m_mid_x = mid_eye_x + nv_x * v_dist * 1.55
-            m_mid_y = mid_eye_y + nv_y * v_dist * 1.55
-            mouth_l = (int(m_mid_x + nh_x * eye_dist * 0.35), int(m_mid_y + nh_y * eye_dist * 0.35))
-            mouth_r = (int(m_mid_x - nh_x * eye_dist * 0.35), int(m_mid_y - nh_y * eye_dist * 0.35))
-            mouth_top = (int(m_mid_x - nv_x * v_dist * 0.14), int(m_mid_y - nv_y * v_dist * 0.14))
-            mouth_bot = (int(m_mid_x + nv_x * v_dist * 0.14), int(m_mid_y + nv_y * v_dist * 0.14))
-            
-            # Jawline / Chin outline
-            chin = (int(mid_eye_x + nv_x * v_dist * 2.2), int(mid_eye_y + nv_y * v_dist * 2.2))
-            chin_l = (int(chin[0] + nh_x * eye_dist * 0.22 - nv_x * v_dist * 0.08), int(chin[1] + nh_y * eye_dist * 0.22 - nv_y * v_dist * 0.08))
-            chin_r = (int(chin[0] - nh_x * eye_dist * 0.22 - nv_x * v_dist * 0.08), int(chin[1] - nh_y * eye_dist * 0.22 - nv_y * v_dist * 0.08))
-            
-            jaw_l = (int(el_x + nv_x * v_dist * 0.5), int(el_y + nv_y * v_dist * 0.5))
-            jaw_r = (int(er_x + nv_x * v_dist * 0.5), int(er_y + nv_y * v_dist * 0.5))
-            
-            # Soft Emerald BGR: (153, 211, 52)
-            mesh_color = (153, 211, 52)
-            
+        mesh_color = (153, 211, 52)
+        mp_drawing = mp.solutions.drawing_utils
+        mp_face_mesh = mp.solutions.face_mesh
+        
+        drawing_spec = mp_drawing.DrawingSpec(thickness=1, circle_radius=0, color=mesh_color)
+        
+        for face_landmarks in face_results.multi_face_landmarks:
             if settings.YOLO_DEBUG_MODE:
-                # ------------------- DEBUG MODE: FULL DENSE TRIANGULATION MESH -------------------
-                connections = [
-                    # Forehead hair line arch
-                    (f_l, f_mid), (f_mid, f_r),
-                    # Eyebrows arches
-                    (eb_l_outer, eb_l_mid), (eb_l_mid, eb_l_inner),
-                    (eb_r_inner, eb_r_mid), (eb_r_mid, eb_r_outer),
-                    (eb_l_inner, eb_r_inner),
-                    # Forehead to eyebrows
-                    (f_l, eb_l_outer), (f_l, eb_l_mid), (f_mid, eb_l_inner), (f_mid, eb_r_inner), (f_r, eb_r_mid), (f_r, eb_r_outer),
-                    # Forehead to temples/ears
-                    (f_l, (int(el_x), int(el_y))), (f_r, (int(er_x), int(er_y))),
-                    
-                    # Eye socket loops (diamonds)
-                    (le_top, le_outer), (le_outer, le_bottom), (le_bottom, le_inner), (le_inner, le_top),
-                    (re_top, re_inner), (re_inner, re_bottom), (re_bottom, re_outer), (re_outer, re_top),
-                    
-                    # Eye center (pupil) connections to its sockets
-                    ((int(eyel_x), int(eyel_y)), le_top), ((int(eyel_x), int(eyel_y)), le_outer), 
-                    ((int(eyel_x), int(eyel_y)), le_bottom), ((int(eyel_x), int(eyel_y)), le_inner),
-                    ((int(eyer_x), int(eyer_y)), re_top), ((int(eyer_x), int(eyer_y)), re_inner),
-                    ((int(eyer_x), int(eyer_y)), re_bottom), ((int(eyer_x), int(eyer_y)), re_outer),
-                    
-                    # Brow to eye sockets
-                    (eb_l_outer, le_outer), (eb_l_mid, le_top), (eb_l_inner, le_inner),
-                    (eb_r_inner, re_inner), (eb_r_mid, re_top), (eb_r_outer, re_outer),
-                    
-                    # Nose structure
-                    (bridge_top, bridge_mid), (bridge_mid, nose_tip),
-                    (nose_l, nose_tip), (nose_tip, nose_r),
-                    (bridge_mid, nose_l), (bridge_mid, nose_r),
-                    # Nose bridge connections to brows
-                    (bridge_top, eb_l_inner), (bridge_top, eb_r_inner),
-                    # Nose to inner eye sockets
-                    (bridge_mid, le_inner), (bridge_mid, re_inner),
-                    
-                    # Cheeks and outer connections
-                    ((int(el_x), int(el_y)), le_outer), ((int(er_x), int(er_y)), re_outer),
-                    ((int(el_x), int(el_y)), cheek_l), ((int(er_x), int(er_y)), cheek_r),
-                    (le_bottom, cheek_l), (re_bottom, cheek_r),
-                    (nose_l, cheek_l), (nose_r, cheek_r),
-                    
-                    # Mouth lip loop
-                    (mouth_l, mouth_top), (mouth_top, mouth_r), (mouth_r, mouth_bot), (mouth_bot, mouth_l),
-                    
-                    # Nose to mouth connections
-                    (nose_tip, mouth_top), (nose_l, mouth_l), (nose_r, mouth_r),
-                    # Cheeks to mouth
-                    (cheek_l, mouth_l), (cheek_r, mouth_r),
-                    
-                    # Jawline & Chin contour arch
-                    ((int(el_x), int(el_y)), jaw_l), (jaw_l, chin_l), (chin_l, chin), (chin, chin_r), (chin_r, jaw_r), (jaw_r, (int(er_x), int(er_y))),
-                    
-                    # Chin to mouth connections
-                    (chin_l, mouth_l), (chin, mouth_bot), (chin_r, mouth_r),
-                    # Cheeks to jaw
-                    (cheek_l, jaw_l), (cheek_r, jaw_r)
-                ]
-                for pt1, pt2 in connections:
-                    cv2.line(frame, pt1, pt2, mesh_color, 1, lineType=cv2.LINE_AA)
-                    
-                all_mesh_pts = [
-                    f_mid, f_l, f_r, eb_l_mid, eb_l_inner, eb_l_outer, eb_r_mid, eb_r_inner, eb_r_outer,
-                    bridge_top, bridge_mid, nose_tip, nose_l, nose_r,
-                    le_top, le_bottom, le_inner, le_outer, re_top, re_bottom, re_inner, re_outer,
-                    cheek_l, cheek_r, mouth_l, mouth_r, mouth_top, mouth_bot,
-                    chin, chin_l, chin_r, jaw_l, jaw_r
-                ]
-                for pt in all_mesh_pts:
-                    cv2.circle(frame, pt, 2, mesh_color, -1, lineType=cv2.LINE_AA)
+                # Dense tessellation
+                mp_drawing.draw_landmarks(
+                    image=frame,
+                    landmark_list=face_landmarks,
+                    connections=mp_face_mesh.FACEMESH_TESSELATION,
+                    landmark_drawing_spec=None,
+                    connection_drawing_spec=drawing_spec)
             else:
-                # ------------------- PRODUCTION MODE: MINIMAL CLEAN CONTOURS -------------------
-                # 1. Eyebrows
-                eb_l = [eb_l_outer, eb_l_mid, eb_l_inner]
-                eb_r = [eb_r_inner, eb_r_mid, eb_r_outer]
-                for i in range(len(eb_l)-1):
-                    cv2.line(frame, eb_l[i], eb_l[i+1], mesh_color, 1, lineType=cv2.LINE_AA)
-                for i in range(len(eb_r)-1):
-                    cv2.line(frame, eb_r[i], eb_r[i+1], mesh_color, 1, lineType=cv2.LINE_AA)
-                
-                # 2. Eye Orbits (Contours)
-                eye_l_poly = np.array([le_top, le_outer, le_bottom, le_inner], dtype=np.int32)
-                eye_r_poly = np.array([re_top, re_inner, re_bottom, re_outer], dtype=np.int32)
-                cv2.polylines(frame, [eye_l_poly], True, mesh_color, 1, lineType=cv2.LINE_AA)
-                cv2.polylines(frame, [eye_r_poly], True, mesh_color, 1, lineType=cv2.LINE_AA)
-                
-                # 3. Crosshair Pupils
-                if eye_l_conf > 0.3:
-                    cx, cy = int(eyel_x), int(eyel_y)
-                    cv2.line(frame, (cx-3, cy), (cx+3, cy), mesh_color, 1, lineType=cv2.LINE_AA)
-                    cv2.line(frame, (cx, cy-3), (cx, cy+3), mesh_color, 1, lineType=cv2.LINE_AA)
-                if eye_r_conf > 0.3:
-                    cx, cy = int(eyer_x), int(eyer_y)
-                    cv2.line(frame, (cx-3, cy), (cx+3, cy), mesh_color, 1, lineType=cv2.LINE_AA)
-                    cv2.line(frame, (cx, cy-3), (cx, cy+3), mesh_color, 1, lineType=cv2.LINE_AA)
-                
-                # 4. Nose Bridge and Nostrils
-                cv2.line(frame, bridge_top, bridge_mid, mesh_color, 1, lineType=cv2.LINE_AA)
-                cv2.line(frame, bridge_mid, nose_tip, mesh_color, 1, lineType=cv2.LINE_AA)
-                cv2.line(frame, nose_l, nose_tip, mesh_color, 1, lineType=cv2.LINE_AA)
-                cv2.line(frame, nose_tip, nose_r, mesh_color, 1, lineType=cv2.LINE_AA)
-                
-                # 5. Mouth Loop
-                mouth_poly = np.array([mouth_l, mouth_top, mouth_r, mouth_bot], dtype=np.int32)
-                cv2.polylines(frame, [mouth_poly], True, mesh_color, 1, lineType=cv2.LINE_AA)
-                
-                # 6. Jawline
-                jaw_pts = [jaw_l, chin_l, chin, chin_r, jaw_r]
-                for i in range(len(jaw_pts)-1):
-                    cv2.line(frame, jaw_pts[i], jaw_pts[i+1], mesh_color, 1, lineType=cv2.LINE_AA)
-                
-                # 7. Draw 2px Circles on contour vertices only
-                contour_pts = [
-                    eb_l_outer, eb_l_mid, eb_l_inner, eb_r_inner, eb_r_mid, eb_r_outer,
-                    le_top, le_outer, le_bottom, le_inner, re_top, re_inner, re_bottom, re_outer,
-                    bridge_top, bridge_mid, nose_tip, nose_l, nose_r,
-                    mouth_l, mouth_top, mouth_r, mouth_bot,
-                    jaw_l, chin_l, chin, chin_r, jaw_r
-                ]
-                for pt in contour_pts:
-                    cv2.circle(frame, pt, 2, mesh_color, -1, lineType=cv2.LINE_AA)
+                # Contours and irises for clean production look
+                mp_drawing.draw_landmarks(
+                    image=frame,
+                    landmark_list=face_landmarks,
+                    connections=mp_face_mesh.FACEMESH_CONTOURS,
+                    landmark_drawing_spec=None,
+                    connection_drawing_spec=drawing_spec)
+                mp_drawing.draw_landmarks(
+                    image=frame,
+                    landmark_list=face_landmarks,
+                    connections=mp_face_mesh.FACEMESH_IRISES,
+                    landmark_drawing_spec=None,
+                    connection_drawing_spec=drawing_spec)
 
 
     def _generate_mock_frame(self):
@@ -1014,29 +835,21 @@ class CVMonitor:
             self._draw_hand_skeleton(frame, r_wrist, r_elbow, 1.0, 1.0)
 
             # 3. Draw thin cybernetic face mesh contours using mock coordinates
-            mock_nose = (float(head_center[0]), float(head_center[1]))
-            mock_ear_l = (float(head_center[0] - 22), float(head_center[1]))
-            mock_ear_r = (float(head_center[0] + 22), float(head_center[1]))
-            mock_eye_l = (float(head_center[0] - 8), float(head_center[1] - 2))
-            mock_eye_r = (float(head_center[0] + 8), float(head_center[1] - 2))
+            mock_nose = (int(head_center[0]), int(head_center[1]))
+            mock_eye_l = (int(head_center[0] - 8), int(head_center[1] - 2))
+            mock_eye_r = (int(head_center[0] + 8), int(head_center[1] - 2))
             
             is_blinking_mock = (t % 4 < 0.25) # Blink for 0.25s every 4s
+            cv2.circle(frame, mock_nose, 2, (153, 211, 52), -1)
+            
             if is_blinking_mock:
-                # Closed eyes: draw mesh with 0.0 eye conf and draw flat indicator eye lines
-                self._draw_face_mesh(
-                    frame,
-                    mock_nose, mock_ear_l, mock_ear_r, mock_eye_l, mock_eye_r,
-                    1.0, 1.0, 1.0, 0.0, 0.0
-                )
-                cv2.line(frame, (int(mock_eye_l[0]-4), int(mock_eye_l[1])), (int(mock_eye_l[0]+4), int(mock_eye_l[1])), (20, 220, 240), 1)
-                cv2.line(frame, (int(mock_eye_r[0]-4), int(mock_eye_r[1])), (int(mock_eye_r[0]+4), int(mock_eye_r[1])), (20, 220, 240), 1)
-                cv2.putText(frame, "BLINK", (int(mock_nose[0])-16, int(mock_nose[1])-35), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (20, 220, 240), 1)
+                # Closed eyes: draw flat indicator eye lines
+                cv2.line(frame, (mock_eye_l[0]-4, mock_eye_l[1]), (mock_eye_l[0]+4, mock_eye_l[1]), (20, 220, 240), 1)
+                cv2.line(frame, (mock_eye_r[0]-4, mock_eye_r[1]), (mock_eye_r[0]+4, mock_eye_r[1]), (20, 220, 240), 1)
+                cv2.putText(frame, "BLINK", (mock_nose[0]-16, mock_nose[1]-35), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (20, 220, 240), 1)
             else:
-                self._draw_face_mesh(
-                    frame,
-                    mock_nose, mock_ear_l, mock_ear_r, mock_eye_l, mock_eye_r,
-                    1.0, 1.0, 1.0, 1.0, 1.0
-                )
+                cv2.circle(frame, mock_eye_l, 1, (153, 211, 52), -1)
+                cv2.circle(frame, mock_eye_r, 1, (153, 211, 52), -1)
 
             # Export landmarks for main loop displacement scoring
             landmarks[0] = (head_center[0]/640.0, head_center[1]/480.0)
