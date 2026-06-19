@@ -218,6 +218,7 @@ class CVMonitor:
         # Set resolution to 640x480 for fast processing
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
         if not cap.isOpened() or settings.MOCK_CAMERA:
             print(f"[CV Engine] Webcam index {settings.CAMERA_INDEX} not available or mock mode forced. Starting simulated feed...")
@@ -242,8 +243,8 @@ class CVMonitor:
             static_image_mode=False,
             max_num_faces=1,
             refine_landmarks=True,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
+            min_detection_confidence=0.7,
+            min_tracking_confidence=0.7
         )
 
         prev_time = time.time()
@@ -308,7 +309,26 @@ class CVMonitor:
                     face_detected = False
                     detected = False
                     model_confidence = 0.0
-                    is_blinking = False  # Blink is simulated in mock mode, disabled in webcam mode
+                    if face_results.multi_face_landmarks:
+                        landmarks = face_results.multi_face_landmarks[0].landmark
+                        def get_pt(idx):
+                            return np.array([landmarks[idx].x, landmarks[idx].y])
+                        
+                        # Left Eye EAR
+                        le_v1 = np.linalg.norm(get_pt(160) - get_pt(144))
+                        le_v2 = np.linalg.norm(get_pt(158) - get_pt(153))
+                        le_h = np.linalg.norm(get_pt(33) - get_pt(133))
+                        ear_left = (le_v1 + le_v2) / (2.0 * le_h)
+                        
+                        # Right Eye EAR
+                        re_v1 = np.linalg.norm(get_pt(385) - get_pt(380))
+                        re_v2 = np.linalg.norm(get_pt(387) - get_pt(373))
+                        re_h = np.linalg.norm(get_pt(362) - get_pt(263))
+                        ear_right = (re_v1 + re_v2) / (2.0 * re_h)
+                        
+                        ear = (ear_left + ear_right) / 2.0
+                        if ear < 0.22:
+                            is_blinking = True
 
                     if yolo_results and len(yolo_results[0].boxes) > 0:
                         boxes = yolo_results[0].boxes
@@ -332,15 +352,18 @@ class CVMonitor:
                             if track_ids is not None:
                                 self.locked_track_id = int(track_ids[primary_idx])
                         
-                        pose_detected = True
-                        face_detected = True
-                        detected = True
-                        
                         kp_xyn = yolo_results[0].keypoints.xyn[primary_idx].cpu().numpy()  # shape (17, 2)
                         kp_xy = yolo_results[0].keypoints.xy[primary_idx].cpu().numpy()    # shape (17, 2)
                         kp_conf = yolo_results[0].keypoints.conf[primary_idx].cpu().numpy()  # shape (17,)
                         
-                        model_confidence = float(np.mean(kp_conf))
+                        # Only average confidence for visible keypoints to avoid penalizing for hidden legs/feet
+                        visible_confs = kp_conf[kp_conf > 0.2]
+                        model_confidence = float(np.mean(visible_confs)) if len(visible_confs) > 0 else float(np.mean(kp_conf))
+                        
+                        if model_confidence > 0.3:
+                            pose_detected = True
+                            face_detected = True
+                            detected = True
 
                         # Exponential Moving Average keypoint smoothing to eliminate coordinate jitter
                         alpha = settings.YOLO_SMOOTHING_FACTOR
@@ -371,66 +394,7 @@ class CVMonitor:
                             else:
                                 self.smoothed_landmarks[mp_idx] = val
                         
-                        # Draw thin, clean pose skeleton: Off-white lines, clean green joints using smoothed coordinates
-                        connections = [
-                            (5, 7), (7, 9),   # Left arm
-                            (6, 8), (8, 10),  # Right arm
-                            (11, 13), (13, 15), # Left leg
-                            (12, 14), (14, 16)  # Right leg
-                        ]
-                        
-                        for pt1_idx, pt2_idx in connections:
-                            if kp_conf[pt1_idx] > 0.3 and kp_conf[pt2_idx] > 0.3:
-                                p1 = (int(self.smoothed_kp_xy[pt1_idx][0]), int(self.smoothed_kp_xy[pt1_idx][1]))
-                                p2 = (int(self.smoothed_kp_xy[pt2_idx][0]), int(self.smoothed_kp_xy[pt2_idx][1]))
-                                cv2.line(frame, p1, p2, (235, 235, 235), 1)
-                                
-                        # Torso cage cross-bracing and midline structural lines
-                        if kp_conf[5] > 0.3 and kp_conf[6] > 0.3 and kp_conf[11] > 0.3 and kp_conf[12] > 0.3:
-                            s_mid_x = int((self.smoothed_kp_xy[5][0] + self.smoothed_kp_xy[6][0]) / 2.0)
-                            s_mid_y = int((self.smoothed_kp_xy[5][1] + self.smoothed_kp_xy[6][1]) / 2.0)
-                            h_mid_x = int((self.smoothed_kp_xy[11][0] + self.smoothed_kp_xy[12][0]) / 2.0)
-                            h_mid_y = int((self.smoothed_kp_xy[11][1] + self.smoothed_kp_xy[12][1]) / 2.0)
-                            
-                            # Spine line
-                            cv2.line(frame, (s_mid_x, s_mid_y), (h_mid_x, h_mid_y), (235, 235, 235), 1)
-                            
-                            # Chest cross braces
-                            p_s5 = (int(self.smoothed_kp_xy[5][0]), int(self.smoothed_kp_xy[5][1]))
-                            p_s6 = (int(self.smoothed_kp_xy[6][0]), int(self.smoothed_kp_xy[6][1]))
-                            p_h11 = (int(self.smoothed_kp_xy[11][0]), int(self.smoothed_kp_xy[11][1]))
-                            p_h12 = (int(self.smoothed_kp_xy[12][0]), int(self.smoothed_kp_xy[12][1]))
-                            cv2.line(frame, p_s5, p_h12, (220, 220, 220), 1)
-                            cv2.line(frame, p_s6, p_h11, (220, 220, 220), 1)
-                            
-                            # Outer sides
-                            cv2.line(frame, p_s5, p_h11, (235, 235, 235), 1)
-                            cv2.line(frame, p_s6, p_h12, (235, 235, 235), 1)
-                            # Top shoulders and bottom hips
-                            cv2.line(frame, p_s5, p_s6, (235, 235, 235), 1)
-                            cv2.line(frame, p_h11, p_h12, (235, 235, 235), 1)
-                            
-                            # Mid-torso horizontal line
-                            mt_l_x = int((self.smoothed_kp_xy[5][0] + self.smoothed_kp_xy[11][0]) / 2.0)
-                            mt_l_y = int((self.smoothed_kp_xy[5][1] + self.smoothed_kp_xy[11][1]) / 2.0)
-                            mt_r_x = int((self.smoothed_kp_xy[6][0] + self.smoothed_kp_xy[12][0]) / 2.0)
-                            mt_r_y = int((self.smoothed_kp_xy[6][1] + self.smoothed_kp_xy[12][1]) / 2.0)
-                            cv2.line(frame, (mt_l_x, mt_l_y), (mt_r_x, mt_r_y), (235, 235, 235), 1)
-                            
-                            # Collar lines (Nose to shoulders midpoint)
-                            if kp_conf[0] > 0.3:
-                                p_nose = (int(self.smoothed_kp_xy[0][0]), int(self.smoothed_kp_xy[0][1]))
-                                cv2.line(frame, p_nose, (s_mid_x, s_mid_y), (235, 235, 235), 1)
-
-                        # Draw joints as micro green circles
-                        for idx in range(17):
-                            if kp_conf[idx] > 0.3:
-                                pt = (int(self.smoothed_kp_xy[idx][0]), int(self.smoothed_kp_xy[idx][1]))
-                                cv2.circle(frame, pt, 1, (74, 163, 22), -1)
-
-                        # Draw advanced palm-arch hand and finger skeletons
-                        self._draw_hand_skeleton(frame, self.smoothed_kp_xy[9], self.smoothed_kp_xy[7], kp_conf[9], kp_conf[7])  # Left hand
-                        self._draw_hand_skeleton(frame, self.smoothed_kp_xy[10], self.smoothed_kp_xy[8], kp_conf[10], kp_conf[8]) # Right hand
+                        # Note: Pose skeleton and hand drawings are disabled to focus on the face only.
 
                         # Draw sleek, thin face skeleton mesh
                         self._draw_face_mesh(frame, face_results)
@@ -488,9 +452,9 @@ class CVMonitor:
                         # Scale raw score by 100 for readable 0.0 to 1.0+ range
                         raw_score = weighted_sum * 100.0
 
-                # Give a boost to raw score if blink detected to help keep WORK state
+                # Give a massive boost to raw score if blink detected to maintain WORK state even if perfectly still
                 if detected and is_blinking:
-                    raw_score += 0.8
+                    raw_score += 25.0
                 
                 # Store current landmarks for next frame comparison
                 if detected:
