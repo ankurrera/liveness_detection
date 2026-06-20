@@ -1,9 +1,9 @@
-// AuraSense - Operational Workforce Monitor Client App
+// AuraSense - The frontend brains for our workforce monitor
 document.addEventListener("DOMContentLoaded", () => {
     let employeeId = 1;
     let timeSplitChart = null;
 
-    // Cache DOM Elements
+    // grab all our dom elements so we don't have to keep hunting for them later
     const employeeSelectEl = document.getElementById("employeeSelect");
     const metricStatusEl = document.getElementById("metric-status");
     const blockStatusEl = document.getElementById("block-status");
@@ -24,27 +24,27 @@ document.addEventListener("DOMContentLoaded", () => {
     const timelineListEl = document.getElementById("timeline-list");
     const logsTableBodyEl = document.getElementById("logs-table-body");
 
-    // Cache Diagnostics Debug Panel Elements
+    // same thing for the debug panel stuff
     const debugRawScoreEl = document.getElementById("debug-raw-score");
     const debugSmoothedScoreEl = document.getElementById("debug-smoothed-score");
     const debugThresholdEl = document.getElementById("debug-threshold");
     const debugIdleCdEl = document.getElementById("debug-idle-cd");
     const debugEpsilonEl = document.getElementById("debug-epsilon");
 
-    // Initialize Components
+    // kick things off
     initChart();
     
-    // Dynamic initialization of active employee dropdown and switching logic
+    // set up the dropdown and logic for switching who we're watching
     async function initEmployeeSelector() {
         try {
-            // 1. Get active employee from backend
+            // 1. ask the backend who we are currently watching
             const activeRes = await fetch("/api/active_employee");
             if (activeRes.ok) {
                 const activeData = await activeRes.json();
                 employeeId = activeData.active_employee_id || 1;
             }
             
-            // 2. Fetch list of all employees
+            // 2. get the list of everyone else so we can populate the dropdown
             const response = await fetch("/api/employees");
             if (response.ok) {
                 const employees = await response.json();
@@ -55,14 +55,14 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         } catch (error) {
             console.error("Error loading employees list:", error);
-            // Fallback options
+            // hardcode some fallbacks if the api is acting up
             employeeSelectEl.innerHTML = `
                 <option value="1" ${employeeId === 1 ? 'selected' : ''}>Ankur Bag (Engineering)</option>
                 <option value="2" ${employeeId === 2 ? 'selected' : ''}>Sayan Sarkar (Engineering)</option>
             `;
         }
 
-        // Register change listener to notify backend of subject switches
+        // listen for dropdown changes so we can tell the backend to switch targets
         employeeSelectEl.addEventListener("change", async (e) => {
             const newEmployeeId = parseInt(e.target.value);
             if (isNaN(newEmployeeId)) return;
@@ -74,13 +74,13 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (response.ok) {
                     employeeId = newEmployeeId;
                     
-                    // Reset doughnut chart visual before reloading metrics
+                    // clear the chart so it doesn't look weird while we load the new person's data
                     if (timeSplitChart) {
                         timeSplitChart.data.datasets[0].data = [0, 0, 0];
                         timeSplitChart.update();
                     }
                     
-                    // Trigger instant metrics refresh
+                    // instantly pull the fresh numbers
                     pollLiveStatus();
                     pollDailyAnalytics();
                     pollHistoryLogs();
@@ -90,12 +90,12 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         });
 
-        // Trigger Initial Polls after loading subject configuration
+        // kick off the first fetch now that we know who we're looking at
         pollLiveStatus();
         pollDailyAnalytics();
         pollHistoryLogs();
 
-        // Setup Polling intervals
+        // set up timers to keep fetching data on repeat
         setInterval(pollLiveStatus, 1000);     // Every 1 second for live counters/timer
         setInterval(pollDailyAnalytics, 3000); // Every 3 seconds for doughnut chart
         setInterval(pollHistoryLogs, 5000);    // Every 5 seconds for timeline and table
@@ -103,7 +103,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     initEmployeeSelector();
 
-    // Helper: format seconds to HH:MM:SS
+    // handy little function to turn seconds into a nice clock format
     function formatSecondsToHHMMSS(totalSeconds) {
         if (totalSeconds < 0 || isNaN(totalSeconds)) totalSeconds = 0;
         const hrs = Math.floor(totalSeconds / 3600);
@@ -116,7 +116,7 @@ document.addEventListener("DOMContentLoaded", () => {
         ].join(':');
     }
 
-    // Helper: format ISO date string to HH:MM:SS
+    // turns an ugly iso date string into just the time part
     function formatTime(isoString) {
         if (!isoString) return '--:--:--';
         const date = new Date(isoString);
@@ -124,7 +124,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return date.toTimeString().split(' ')[0];
     }
 
-    // Helper: format ISO date string to YYYY-MM-DD HH:MM:SS
+    // turns an ugly iso date string into a full readable date and time
     function formatDateTime(isoString) {
         if (!isoString) return '--:--:--';
         const date = new Date(isoString);
@@ -137,7 +137,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ----------------------------------------------------
-    // Chart.js Configuration
+    // getting our chart.js doughnut all set up
     // ----------------------------------------------------
     function initChart() {
         const ctx = document.getElementById("timeSplitChart").getContext("2d");
@@ -159,7 +159,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 maintainAspectRatio: false,
                 plugins: {
                     legend: {
-                        display: false // Use custom panel labels for enterprise feel
+                        display: false // turning off the default legend because we built a prettier custom one
                     },
                     tooltip: {
                         backgroundColor: "#0f172a",
@@ -184,17 +184,17 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ----------------------------------------------------
-    // API Fetch & Polling Loops
+    // api fetching stuff - this is where we actually get our data
     // ----------------------------------------------------
 
-    // 1. Live status: Top banner, status box, shift summary
+    // 1. fetch the live stuff for the top banner and summary box
     async function pollLiveStatus() {
         try {
             const response = await fetch(`/api/activity/live?employee_id=${employeeId}`);
             if (!response.ok) return;
             const data = await response.json();
 
-            // Update status text and active class
+            // update the big status text and change its color
             metricStatusEl.textContent = data.status;
             blockStatusEl.className = "metric-block";
             
@@ -206,23 +206,23 @@ document.addEventListener("DOMContentLoaded", () => {
                 blockStatusEl.classList.add("state-absent");
             }
 
-            // Update top row metrics (directly using backend-computed HH:MM:SS values)
+            // slap the numbers into the top row
             metricWorkingEl.textContent = data.working_time;
             metricIdleEl.textContent = data.idle_time;
             metricAbsentEl.textContent = data.absent_time;
             metricProductivityEl.textContent = `${data.productivity_score_today.toFixed(1)}%`;
 
-            // Update video feed HUD overlays
+            // update the overlays on top of the video feed
             feedModeEl.textContent = data.is_mock ? "SIMULATING FEED" : "WEBCAM ACTIVE";
             feedConfidenceEl.textContent = `CONF: ${Math.round(data.confidence * 100)}%`;
 
-            // Update right shift summary
+            // fill out the shift summary panel
             summaryFirstEl.textContent = data.first_activity || '--:--:--';
             summaryLastEl.textContent = data.last_activity || '--:--:--';
             summaryMonitoredEl.textContent = data.total_monitored_time;
             summaryProdPctEl.textContent = `${data.productivity_score_today.toFixed(1)}%`;
 
-            // Update diagnostics debug panel
+            // dump the dev variables into the bottom panel
             if (debugRawScoreEl) debugRawScoreEl.textContent = (data.raw_score !== undefined) ? data.raw_score.toFixed(4) : "0.0000";
             if (debugSmoothedScoreEl) debugSmoothedScoreEl.textContent = (data.smoothed_score !== undefined) ? data.smoothed_score.toFixed(4) : "0.0000";
             if (debugThresholdEl) debugThresholdEl.textContent = (data.movement_threshold !== undefined) ? data.movement_threshold.toFixed(4) : "0.5000";
@@ -231,7 +231,7 @@ document.addEventListener("DOMContentLoaded", () => {
             }
             if (debugEpsilonEl) debugEpsilonEl.textContent = (data.epsilon_filter !== undefined) ? data.epsilon_filter.toFixed(4) : "0.0015";
 
-            // Restore green indicator
+            // everything is good, make the connection dot green
             document.querySelector(".connection-status").innerHTML = `
                 <span class="status-dot green"></span>
                 <span>DB ONLINE</span>
@@ -239,7 +239,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         } catch (error) {
             console.error("Error polling live status:", error);
-            // Display red offline indicator
+            // uh oh, connection failed, make it red
             document.querySelector(".connection-status").innerHTML = `
                 <span class="status-dot" style="background-color: #ef4444; box-shadow: 0 0 4px #ef4444;"></span>
                 <span>CONN OFFLINE</span>
@@ -247,7 +247,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // 2. Daily analytics: updates Chart.js values
+    // 2. fetch the daily numbers specifically for the doughnut chart
     async function pollDailyAnalytics() {
         try {
             const response = await fetch(`/api/analytics/daily?employee_id=${employeeId}`);
@@ -267,14 +267,14 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // 3. Log history: Updates middle timeline and bottom logs table
+    // 3. fetch the session logs for the timeline and table
     async function pollHistoryLogs() {
         try {
             const response = await fetch(`/api/activity/history?employee_id=${employeeId}&limit=15`);
             if (!response.ok) return;
             const logs = await response.json();
 
-            // A. Update Timeline segments
+            // a. build the cool little timeline cards
             if (logs.length === 0) {
                 timelineListEl.innerHTML = `
                     <div class="list-empty">
@@ -301,7 +301,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 }).join('');
             }
 
-            // B. Update Database Logs Table
+            // b. build the detailed rows for the table at the bottom
             if (logs.length === 0) {
                 logsTableBodyEl.innerHTML = `
                     <tr>

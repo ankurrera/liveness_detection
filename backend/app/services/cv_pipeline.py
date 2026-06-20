@@ -56,32 +56,32 @@ class CVMonitor:
     def __init__(self):
         self.running = False
         self.thread = None
-        self.latest_frame = None  # Holds JPEG bytes
+        self.latest_frame = None  # where we stash the jpeg bytes for the stream
         
-        # State machine variables (thread-safe protected by lock)
+        # state machine variables (make sure these are thread-safe!)
         self.current_status = "ABSENT"
         self.confidence = 0.0
         self.last_present_time = time.time()
         self.last_movement_time = time.time()
         self.state_entered_time = time.time()
         
-        # Diagnostics score tracking
+        # keeping tabs on our tracking scores
         self.latest_raw_score = 0.0
         self.latest_smoothed_score = 0.0
-        self.frame_scores = deque(maxlen=150)  # ~10 second rolling window at 15 FPS
+        self.frame_scores = deque(maxlen=150)  # rolling window of about 10 seconds (assuming 15fps)
         
         self.lock = threading.Lock()
         self.is_mock = False
         self.prev_landmarks = {}
         
-        # Active employee dynamic tracking
+        # who are we watching right now?
         self.active_employee_id = settings.DEFAULT_EMPLOYEE_ID
         
-        # Eye blink tracking variables
+        # blink tracking stuff
         self.blink_count = 0
         self.prev_blinking = False
         
-        # YOLO tracking and smoothing refinements
+        # yolo tracking and jitter reduction
         self.smoothed_landmarks = {}
         self.smoothed_kp_xy = None
         self.locked_track_id = None
@@ -128,27 +128,27 @@ class CVMonitor:
             }
 
     def get_debug_metrics(self) -> dict:
-        """Returns live values for the developer diagnostic dashboard."""
+        """Spits out the live numbers for the dev dashboard."""
         with self.lock:
             now = time.time()
             idle_cd = 0
             
             if self.current_status == "WORKING":
                 elapsed_low = now - self.last_movement_time
-                # Countdown from 60 seconds of continuous inactivity
+                # ticking down from 60 seconds if they stop moving
                 idle_cd = max(0, int(settings.IDLE_TIMEOUT - elapsed_low))
                 
             return {
                 "raw_score": round(self.latest_raw_score, 3),
                 "smoothed_score": round(self.latest_smoothed_score, 3),
-                "movement_threshold": settings.YOLO_ACTIVITY_THRESHOLD,  # Boundary between Low and Working
+                "movement_threshold": settings.YOLO_ACTIVITY_THRESHOLD,  # the line between working and slacking
                 "idle_countdown": idle_cd,
                 "working_countdown": 0,
                 "epsilon_filter": settings.YOLO_EPSILON_FILTER
             }
 
     def set_active_employee(self, employee_id: int):
-        """Thread-safe method to change the actively monitored employee and transition session segments."""
+        """Safely switch who we are watching without breaking the database sessions."""
         with self.lock:
             if self.active_employee_id == employee_id:
                 return
@@ -157,14 +157,14 @@ class CVMonitor:
             
             db = SessionLocal()
             try:
-                # 1. Close current active session for the old employee
+                # 1. wrap up whatever the previous person was doing
                 close_active_session(db, self.active_employee_id)
                 
-                # 2. Update active employee ID
+                # 2. lock onto the new person
                 self.active_employee_id = employee_id
                 self._update_employee_name_cache()
                 
-                # 3. Start a new session for the new employee with current state
+                # 3. start tracking their activity right away
                 start_new_state_session(
                     db,
                     self.active_employee_id,
@@ -180,23 +180,23 @@ class CVMonitor:
             finally:
                 db.close()
                 
-            # Clear frame scores for a clean slate
+            # wipe the slate clean for the new person
             self.frame_scores.clear()
             self.prev_landmarks = {}
             self.blink_count = 0
             self.prev_blinking = False
 
     def _run_loop(self):
-        # 1. Resolve orphaned sessions and seed employee on startup
+        # 1. clean up the database and set up our default users
         db = SessionLocal()
         try:
             resolve_orphaned_sessions(db)
             employee = get_or_create_default_employee(db)
-            # Use the dynamically selected active employee ID
+            # pick the person we are supposed to be watching
             employee_id = self.active_employee_id
             self._update_employee_name_cache()
             
-            # Start initial ABSENT session segment in DB
+            # assume they aren't there until we see them
             start_new_state_session(
                 db, 
                 employee_id, 
@@ -212,10 +212,10 @@ class CVMonitor:
         finally:
             db.close()
 
-        # 2. Attempt webcam connection
+        # 2. try to fire up the webcam
         cap = cv2.VideoCapture(settings.CAMERA_INDEX)
         
-        # Set resolution to 640x480 for fast processing
+        # lock the resolution so we can process frames quickly
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -227,7 +227,7 @@ class CVMonitor:
             print(f"[CV Engine] Successfully opened webcam on index {settings.CAMERA_INDEX}")
             self.is_mock = False
 
-        # 3. Setup YOLOv8 Pose model from configuration
+        # 3. load up the big brain yolo model
         try:
             print(f"[CV Engine] Initializing YOLOv8 Pose model ({settings.YOLO_MODEL_NAME}) on device '{settings.YOLO_DEVICE}'...")
             yolo_model = YOLO(settings.YOLO_MODEL_NAME)
@@ -237,7 +237,7 @@ class CVMonitor:
             self.is_mock = True
             yolo_model = None
 
-        # 3.5 Setup Mediapipe Face Mesh
+        # 3.5 load up google's face mesh
         mp_face_mesh = mp.solutions.face_mesh
         face_mesh = mp_face_mesh.FaceMesh(
             static_image_mode=False,
@@ -249,7 +249,7 @@ class CVMonitor:
 
         prev_time = time.time()
 
-        # Main processing loop
+        # the main event loop
         try:
             while self.running:
                 loop_start = time.time()
@@ -261,40 +261,40 @@ class CVMonitor:
                 ear = 0.3
 
                 if self.is_mock:
-                    # Mock Mode - Generate synthetic frame
+                    # we're in mock mode, so generate a fake video frame
                     frame, detected, model_confidence, current_landmarks = self._generate_mock_frame()
                     
-                    # Simulate periodic blinks in mock mode
+                    # make the fake person blink so it looks somewhat real
                     cycle_time = int(time.time()) % 90
-                    if cycle_time < 70:  # User present
+                    if cycle_time < 70:  # someone is here
                          sec_of_cycle = time.time() % 4
-                         is_blinking = (sec_of_cycle < 0.25)  # Blink for 0.25s every 4s
+                         is_blinking = (sec_of_cycle < 0.25)  # give a quick blink every 4 seconds
                     
-                    time.sleep(max(0.01, (1.0 / 15.0) - (time.time() - loop_start)))  # Limit mock FPS to ~15
+                    time.sleep(max(0.01, (1.0 / 15.0) - (time.time() - loop_start)))  # throttle the fake video to ~15fps
                 else:
-                    # WebCam Mode - Read hardware frame
+                    # real webcam mode - grab a frame from the hardware
                     ret, frame = cap.read()
                     if not ret:
                         print("[CV Engine] Failed to grab frame. Falling back to Mock Mode...")
                         self.is_mock = True
                         continue
 
-                    # Mirror frame for intuitive viewing
+                    # flip the image like a mirror so it doesn't mess with your head
                     frame = cv2.flip(frame, 1)
                     h, w, c = frame.shape
 
-                    # Convert to RGB for YOLOv8 and Mediapipe
+                    # both yolo and mediapipe expect rgb, not opencv's default bgr
                     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     
-                    # Run Mediapipe Face Mesh
+                    # let mediapipe find the face landmarks
                     face_results = face_mesh.process(rgb_frame)
                     
-                    # Run detections using YOLOv8
+                    # let yolo find the body joints
                     if yolo_model is None:
                         self.is_mock = True
                         continue
                     
-                    # Run tracking with configured parameters for real-time consistency
+                    # run the tracker to keep ids consistent across frames
                     yolo_results = yolo_model.track(
                         rgb_frame,
                         persist=True,
@@ -314,13 +314,13 @@ class CVMonitor:
                         def get_pt(idx):
                             return np.array([landmarks[idx].x, landmarks[idx].y])
                         
-                        # Left Eye EAR
+                        # figure out how wide the left eye is open
                         le_v1 = np.linalg.norm(get_pt(160) - get_pt(144))
                         le_v2 = np.linalg.norm(get_pt(158) - get_pt(153))
                         le_h = np.linalg.norm(get_pt(33) - get_pt(133))
                         ear_left = (le_v1 + le_v2) / (2.0 * le_h)
                         
-                        # Right Eye EAR
+                        # figure out how wide the right eye is open
                         re_v1 = np.linalg.norm(get_pt(385) - get_pt(380))
                         re_v2 = np.linalg.norm(get_pt(387) - get_pt(373))
                         re_h = np.linalg.norm(get_pt(362) - get_pt(263))
@@ -333,17 +333,17 @@ class CVMonitor:
                     if yolo_results and len(yolo_results[0].boxes) > 0:
                         boxes = yolo_results[0].boxes
                         
-                        # Primary user tracking index selection
-                        # Calculate box areas (xyxy coordinates)
+                        # figure out which person we should actually be tracking if there are multiple
+                        # find the biggest bounding box
                         xyxy_array = boxes.xyxy.cpu().numpy()
                         areas = (xyxy_array[:, 2] - xyxy_array[:, 0]) * (xyxy_array[:, 3] - xyxy_array[:, 1])
                         
-                        # Get tracker IDs if available
+                        # try to grab the track ids if bytetrack assigned them
                         track_ids = None
                         if boxes.id is not None:
                             track_ids = boxes.id.cpu().numpy().astype(int)
                         
-                        # Select best detection target matching locked track ID, or largest box
+                        # stick with the person we were already watching, or pick the biggest person
                         primary_idx = 0
                         if track_ids is not None and self.locked_track_id is not None and self.locked_track_id in track_ids:
                             primary_idx = int(np.where(track_ids == self.locked_track_id)[0][0])
@@ -356,7 +356,7 @@ class CVMonitor:
                         kp_xy = yolo_results[0].keypoints.xy[primary_idx].cpu().numpy()    # shape (17, 2)
                         kp_conf = yolo_results[0].keypoints.conf[primary_idx].cpu().numpy()  # shape (17,)
                         
-                        # Only average confidence for visible keypoints to avoid penalizing for hidden legs/feet
+                        # only judge confidence based on what we can actually see, don't penalize for hidden legs
                         visible_confs = kp_conf[kp_conf > 0.2]
                         model_confidence = float(np.mean(visible_confs)) if len(visible_confs) > 0 else float(np.mean(kp_conf))
                         
@@ -365,7 +365,7 @@ class CVMonitor:
                             face_detected = True
                             detected = True
 
-                        # Exponential Moving Average keypoint smoothing to eliminate coordinate jitter
+                        # smooth out the keypoints so they don't jump around like crazy
                         alpha = settings.YOLO_SMOOTHING_FACTOR
                         if self.smoothed_kp_xy is None or len(self.smoothed_kp_xy) != len(kp_xy):
                             self.smoothed_kp_xy = kp_xy.copy()
@@ -376,14 +376,14 @@ class CVMonitor:
                                 else:
                                     self.smoothed_kp_xy[idx] = kp_xy[idx]
 
-                        # Gather landmarks for movement analysis using normalized coordinates
-                        # YOLO keypoints index: 0=nose, 5=L_shoulder, 6=R_shoulder, 7=L_elbow, 8=R_elbow, 9=L_wrist, 10=R_wrist
-                        # MediaPipe-like mapping: nose=0, shoulders=11/12, elbows=13/14, wrists=15/16
+                        # map the yolo joints to the mediapipe-style index
+                        # yolo index: 0=nose, 5=l_shoulder, 6=r_shoulder, 7=l_elbow, 8=r_elbow, 9=l_wrist, 10=r_wrist
+                        # our internal index: nose=0, shoulders=11/12, elbows=13/14, wrists=15/16
                         for yolo_idx, mp_idx in [(0, 0), (5, 11), (6, 12), (7, 13), (8, 14), (9, 15), (10, 16)]:
                             if kp_conf[yolo_idx] > 0.3:
                                 current_landmarks[mp_idx] = (float(kp_xyn[yolo_idx][0]), float(kp_xyn[yolo_idx][1]))
                         
-                        # Smooth landmarks for movement analysis
+                        # apply the same smoothing to our movement analysis coordinates
                         for mp_idx, val in current_landmarks.items():
                             if mp_idx in self.smoothed_landmarks:
                                 prev_val = self.smoothed_landmarks[mp_idx]
@@ -394,33 +394,33 @@ class CVMonitor:
                             else:
                                 self.smoothed_landmarks[mp_idx] = val
                         
-                        # Note: Pose skeleton and hand drawings are disabled to focus on the face only.
+                        # skipping the body skeleton for now to keep the UI clean
 
-                        # Draw sleek, thin face skeleton mesh
+                        # paint the cool cybernetic face mesh on top
                         self._draw_face_mesh(frame, face_results)
 
-                # Process blink transitions & reset countdown
+                # count the blinks and use them to prove they are still alive/working
                 if is_blinking:
                     with self.lock:
                         if not self.prev_blinking:
                             self.blink_count += 1
-                            self.last_movement_time = time.time()  # Keep user active!
+                            self.last_movement_time = time.time()  # blinks count as movement! keep them working!
                             print(f"[CV Engine] Blink detected (Count: {self.blink_count})")
                         self.prev_blinking = True
                 else:
                     with self.lock:
                         self.prev_blinking = False
 
-                # 4. Weighted Landmark Activity Scoring with Epsilon Filter
+                # 4. calculate how much they actually moved, filtering out tiny jitters
                 raw_score = 0.0
                 epsilon = settings.YOLO_EPSILON_FILTER
                 
-                # Group configs with target weights
+                # give more weight to hand movements than just head bobbing
                 groups = {
-                    "hands": {"indices": [15, 16], "weight": 0.50},      # Wrists (50%)
-                    "arms": {"indices": [13, 14], "weight": 0.25},       # Elbows (25%)
-                    "shoulders": {"indices": [11, 12], "weight": 0.15},  # Shoulders (15%)
-                    "head": {"indices": [0], "weight": 0.10}            # Nose/Face (10%)
+                    "hands": {"indices": [15, 16], "weight": 0.50},      # hands matter the most
+                    "arms": {"indices": [13, 14], "weight": 0.25},       # elbows are secondary
+                    "shoulders": {"indices": [11, 12], "weight": 0.15},  # shoulders a bit less
+                    "head": {"indices": [0], "weight": 0.10}            # head movement is the least important indicator of work
                 }
                 
                 group_displacements = {}
@@ -434,14 +434,14 @@ class CVMonitor:
                                 prev_pt = self.prev_landmarks[idx]
                                 d = np.sqrt((pt[0] - prev_pt[0])**2 + (pt[1] - prev_pt[1])**2)
                                 
-                                # Apply Epsilon noise threshold filter
+                                # ignore movements that are too small (probably just noise)
                                 if d >= epsilon:
                                     sum_d += d
                                 count += 1
                         if count > 0:
                             group_displacements[group_name] = sum_d / count
 
-                # Normalize weights dynamically for visible groups
+                # adjust the math if we can't see all their joints (like hands under the desk)
                 if group_displacements:
                     total_available_weight = sum(groups[g]["weight"] for g in group_displacements.keys())
                     if total_available_weight > 0:
@@ -449,20 +449,20 @@ class CVMonitor:
                         for g, disp in group_displacements.items():
                             normalized_w = groups[g]["weight"] / total_available_weight
                             weighted_sum += normalized_w * disp
-                        # Scale raw score by 100 for readable 0.0 to 1.0+ range
+                        # make the score a nice readable number (0.0 to 1.0+)
                         raw_score = weighted_sum * 100.0
 
-                # Give a massive boost to raw score if blink detected to maintain WORK state even if perfectly still
+                # give them a massive activity boost if they blink, so they don't get marked idle while just staring at code
                 if detected and is_blinking:
                     raw_score += 25.0
                 
-                # Store current landmarks for next frame comparison
+                # save these coordinates so we can compare them next time
                 if detected:
                     self.prev_landmarks = self.smoothed_landmarks.copy()
                 else:
                     self.prev_landmarks = {}
 
-                # 5. Temporal Rolling average Smoothing
+                # 5. average out the scores over time to prevent flickering
                 self.frame_scores.append(raw_score)
                 smoothed_score = sum(self.frame_scores) / len(self.frame_scores) if self.frame_scores else 0.0
                 
@@ -470,7 +470,7 @@ class CVMonitor:
                     self.latest_raw_score = raw_score
                     self.latest_smoothed_score = smoothed_score
 
-                # 6. State Machine Timer & Transition Logic
+                # 6. the brain of the operation - deciding if they are working, idle, or gone
                 now = time.time()
                 new_status = self.current_status
                 old_status = self.current_status
@@ -481,32 +481,32 @@ class CVMonitor:
                     if detected:
                         self.last_present_time = now
                         self.confidence = float(model_confidence)
-                        is_active_working = smoothed_score >= settings.YOLO_ACTIVITY_THRESHOLD  # Working threshold boundary
+                        is_active_working = smoothed_score >= settings.YOLO_ACTIVITY_THRESHOLD  # did they hit the threshold?
 
                         if self.current_status == "ABSENT":
-                            # Return from absence -> Immediately WORKING
+                            # they just got back, immediately mark them as working
                             new_status = "WORKING"
                             self.last_movement_time = now
                             transition_reason = "Subject detected returned in frame."
                         elif is_active_working:
-                            # Active movement resets the idle countdown
+                            # they moved enough to reset the idle timer
                             self.last_movement_time = now
                             if self.current_status == "IDLE":
                                 new_status = "WORKING"
                                 transition_reason = f"Active movement resumed (score: {smoothed_score:.3f})."
                         else:
-                            # Low/No activity (score < YOLO_ACTIVITY_THRESHOLD)
+                            # they aren't moving enough
                             if self.current_status == "WORKING":
-                                # Verify if low activity persists for 60 seconds
+                                # have they been slacking for a full 60 seconds?
                                 elapsed_low = now - self.last_movement_time
                                 if elapsed_low >= settings.IDLE_TIMEOUT:
                                     new_status = "IDLE"
                                     transition_reason = f"Low activity persisted for 60 seconds (average score: {smoothed_score:.3f})."
                     else:
-                        # Person absent from view
+                        # we can't see anyone
                         self.confidence = 0.0
                         if self.current_status != "ABSENT":
-                            # Verify if absence persists for 10 seconds
+                            # are they really gone, or just dropped something on the floor? (wait 10s)
                             if now - self.last_present_time >= settings.ABSENT_TIMEOUT:
                                 new_status = "ABSENT"
                                 self.locked_track_id = None
@@ -514,14 +514,14 @@ class CVMonitor:
                                 self.smoothed_landmarks = {}
                                 transition_reason = "No person detected for 10 continuous seconds."
 
-                    # Apply transition
+                    # make it official
                     if new_status != self.current_status:
                         print(f"[CV Engine] Transition: {self.current_status} -> {new_status} | Reason: {transition_reason}")
                         self.current_status = new_status
                         self.state_entered_time = now
                         state_changed = True
 
-                # 7. Database log on state transition
+                # 7. write the change to the database
                 if state_changed:
                     db = SessionLocal()
                     try:
@@ -540,14 +540,14 @@ class CVMonitor:
                     finally:
                         db.close()
 
-                # 8. FPS calculation and HUD annotations
+                # 8. calculate fps and draw the dev dashboard
                 current_fps = 1.0 / (time.time() - prev_time + 1e-6)
                 prev_time = time.time()
 
-                # Draw HUD panel on the frame
+                # slap the hud onto the video frame
                 self._draw_hud(frame, current_fps, raw_score, smoothed_score)
 
-                # 9. Encode frame to JPEG bytes
+                # 9. squish it down into a jpeg so we can stream it
                 ret_enc, jpeg_buffer = cv2.imencode('.jpg', frame)
                 if ret_enc:
                     self.latest_frame = jpeg_buffer.tobytes()
@@ -570,12 +570,12 @@ class CVMonitor:
 
     def _draw_hud(self, frame, fps, raw_score, smoothed_score):
         h, w, c = frame.shape
-        # Solid background box for dashboard details
+        # background box for the dashboard so text is readable
         overlay = frame.copy()
         cv2.rectangle(overlay, (10, 10), (300, 140), (20, 24, 33), -1)
         cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
 
-        # Status text colors
+        # colors for different states
         status_colors = {
             "WORKING": (74, 163, 22),  # #16A34A (Green)
             "IDLE": (11, 158, 245),    # #F59E0B (Amber)
@@ -583,7 +583,7 @@ class CVMonitor:
         }
         color = status_colors.get(self.current_status, (255, 255, 255))
 
-        # Add HUD Text (Professional and compact)
+        # draw the dev metrics on the screen
         cv2.putText(frame, f"STATE: {self.current_status}", (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
         if not self.is_mock and self.locked_track_id is not None:
             cv2.putText(frame, f"Track ID: {self.locked_track_id}", (180, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
@@ -591,7 +591,7 @@ class CVMonitor:
         cv2.putText(frame, f"Smooth Score: {smoothed_score:.3f}", (20, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
         cv2.textWidth = 10
         
-        # Idle/absent count downs
+        # show the countdown timers if applicable
         now = time.time()
         if self.current_status == "WORKING":
             elapsed = now - self.last_movement_time
@@ -603,7 +603,7 @@ class CVMonitor:
         mode_str = "SIMULATED FEED" if self.is_mock else "WEBCAM LIVE"
         cv2.putText(frame, f"Mode: {mode_str} ({fps:.1f} FPS)", (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 200, 200), 1)
 
-        # Draw status circle indicator
+        # draw the little colored circle in the top right
         cv2.circle(frame, (w - 25, 25), 8, color, -1)
         cv2.circle(frame, (w - 25, 25), 10, (255, 255, 255), 1)
 
@@ -636,19 +636,19 @@ class CVMonitor:
                 jt = (int(k_pt[0] + rx * f_len * 0.4), int(k_pt[1] + ry * f_len * 0.4))
                 tip = (int(k_pt[0] + rx * f_len * 0.8), int(k_pt[1] + ry * f_len * 0.8))
                 
-                # Draw wrist-to-knuckle (metacarpal bones)
+                # connect the wrist to the knuckles
                 cv2.line(frame, (int(w_pt[0]), int(w_pt[1])), k_pt, (235, 235, 235), 1)
-                # Draw knuckle-to-joint
+                # knuckle to joint
                 cv2.line(frame, k_pt, jt, (235, 235, 235), 1)
-                # Draw joint-to-tip
+                # joint to fingertip
                 cv2.line(frame, jt, tip, (235, 235, 235), 1)
                 
-                # Draw micro joints
+                # draw the little green joint dots
                 cv2.circle(frame, k_pt, 1, (74, 163, 22), -1)
                 cv2.circle(frame, jt, 1, (74, 163, 22), -1)
                 cv2.circle(frame, tip, 1, (74, 163, 22), -1)
                 
-            # Connect the knuckles to form the palm arch mesh
+            # connect the knuckles across the palm
             for i in range(len(knuckles) - 1):
                 cv2.line(frame, knuckles[i], knuckles[i+1], (235, 235, 235), 1)
 
@@ -664,7 +664,7 @@ class CVMonitor:
         
         for face_landmarks in face_results.multi_face_landmarks:
             if settings.YOLO_DEBUG_MODE:
-                # Dense tessellation
+                # draw the super intense dense mesh
                 mp_drawing.draw_landmarks(
                     image=frame,
                     landmark_list=face_landmarks,
@@ -672,7 +672,7 @@ class CVMonitor:
                     landmark_drawing_spec=None,
                     connection_drawing_spec=drawing_spec)
             else:
-                # Contours and irises for clean production look
+                # just draw the clean contours and eyes for production
                 mp_drawing.draw_landmarks(
                     image=frame,
                     landmark_list=face_landmarks,
@@ -689,17 +689,14 @@ class CVMonitor:
 
     def _generate_mock_frame(self):
         """
-        Generates simulated frames to mimic a user at a desk with an advanced
-        cybernetic-style thin skeleton and face mesh overlay.
-        Cycles state rules for demo purposes:
-          - 0-35s: Working (simulated typing / movement)
-          - 35-70s: Idle (static sitting)
-          - 70-90s: Absent (blank frame)
+        Spits out fake frames of someone sitting at a desk.
+        This is just for testing if you don't have a webcam.
+        It loops through working -> idle -> absent.
         """
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        frame[:] = (24, 20, 15)  # #0f172a (Steel dark background)
+        frame[:] = (24, 20, 15)  # dark slate background
 
-        # Draw office table layout
+        # draw a blocky table
         cv2.rectangle(frame, (40, 390), (600, 480), (35, 42, 50), -1)
         cv2.rectangle(frame, (210, 280), (430, 390), (60, 60, 60), -1)
         cv2.rectangle(frame, (220, 290), (420, 375), (10, 10, 10), -1)
@@ -712,13 +709,13 @@ class CVMonitor:
         landmarks = {}
 
         if cycle_time < 70:
-            # User is present (WORKING or IDLE)
+            # they are at the desk
             detected = True
             t = time.time()
             
-            # Setup active / idle parameters
+            # configure how much they move based on the simulated state
             if cycle_time < 35:
-                # WORKING state - active noise
+                # they are working, so simulate lots of jitter and typing
                 confidence = 0.94
                 noise_x = int(np.sin(t * 8) * 4)
                 noise_y = int(np.cos(t * 10) * 3)
@@ -736,7 +733,7 @@ class CVMonitor:
                 cv2.rectangle(frame, (240, 400), (400, 420), (74, 163, 22), 1)
                 cv2.putText(frame, "SIMULATING ACTIVE WORK", (250, 414), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (74, 163, 22), 1)
             else:
-                # IDLE state - very static
+                # they are slacking, just barely moving
                 confidence = 0.90
                 drift_x = int(np.sin(t * 0.4) * 0.4)
                 drift_y = int(np.cos(t * 0.4) * 0.4)
@@ -751,7 +748,7 @@ class CVMonitor:
                 
                 cv2.putText(frame, "SIMULATING STATIC IDLE", (230, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (11, 158, 245), 1)
 
-            # 1. Draw background user body (very dark muted outlines)
+            # 1. draw the dark silhouette of a person
             cv2.circle(frame, head_center, 28, (45, 40, 35), -1)
             cv2.line(frame, l_shoulder, r_shoulder, (45, 40, 35), 16)
             cv2.line(frame, l_shoulder, l_elbow, (45, 40, 35), 8)
@@ -759,34 +756,34 @@ class CVMonitor:
             cv2.line(frame, r_shoulder, r_elbow, (45, 40, 35), 8)
             cv2.line(frame, r_elbow, r_wrist, (45, 40, 35), 8)
 
-            # 2. Draw high-fidelity thin tracking skeleton overlay
-            # Thin off-white lines for skeleton limbs
+            # 2. draw the cool cyber skeleton on top
+            # thin white lines for arms
             cv2.line(frame, l_shoulder, l_elbow, (235, 235, 235), 1)
             cv2.line(frame, l_elbow, l_wrist, (235, 235, 235), 1)
             cv2.line(frame, r_shoulder, r_elbow, (235, 235, 235), 1)
             cv2.line(frame, r_elbow, r_wrist, (235, 235, 235), 1)
             
-            # Torso cage cross-bracing and midline
+            # chest and torso lines
             s_mid_x = int((l_shoulder[0] + r_shoulder[0]) / 2.0)
             s_mid_y = int((l_shoulder[1] + r_shoulder[1]) / 2.0)
-            # Neck line
+            # neck
             cv2.line(frame, head_center, (s_mid_x, s_mid_y), (235, 235, 235), 1)
             
-            # Hips virtual midline
+            # hips
             h_mid_x = 320
             h_mid_y = 370
-            # Spine line
+            # spine
             cv2.line(frame, (s_mid_x, s_mid_y), (h_mid_x, h_mid_y), (235, 235, 235), 1)
-            # Virtual hip bones and side lines
+            # hip bones
             cv2.line(frame, (280, h_mid_y), (360, h_mid_y), (235, 235, 235), 1)
             cv2.line(frame, l_shoulder, (280, h_mid_y), (235, 235, 235), 1)
             cv2.line(frame, r_shoulder, (360, h_mid_y), (235, 235, 235), 1)
             
-            # Torso cross braces
+            # x-brace across the chest
             cv2.line(frame, l_shoulder, (360, h_mid_y), (220, 220, 220), 1)
             cv2.line(frame, r_shoulder, (280, h_mid_y), (220, 220, 220), 1)
 
-            # Thin green joint dots
+            # the green dots on the joints
             cv2.circle(frame, l_shoulder, 2, (74, 163, 22), -1)
             cv2.circle(frame, r_shoulder, 2, (74, 163, 22), -1)
             cv2.circle(frame, l_elbow, 2, (74, 163, 22), -1)
@@ -794,7 +791,7 @@ class CVMonitor:
             cv2.circle(frame, l_wrist, 2, (74, 163, 22), -1)
             cv2.circle(frame, r_wrist, 2, (74, 163, 22), -1)
 
-            # 2.5 Draw mock hands and finger skeletons
+            # draw the fake hands
             self._draw_hand_skeleton(frame, l_wrist, l_elbow, 1.0, 1.0)
             self._draw_hand_skeleton(frame, r_wrist, r_elbow, 1.0, 1.0)
 

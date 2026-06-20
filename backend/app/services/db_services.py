@@ -6,7 +6,7 @@ from app.models import Employee, ActivityLog, DailySummary
 from app.config import settings
 
 def format_seconds_to_hhmmss(seconds: int) -> str:
-    """Converts a duration in seconds into HH:MM:SS format."""
+    """Turns boring seconds into a nice human readable HH:MM:SS format."""
     if seconds < 0:
         seconds = 0
     h = seconds // 3600
@@ -15,8 +15,8 @@ def format_seconds_to_hhmmss(seconds: int) -> str:
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 def get_or_create_default_employee(db: Session) -> Employee:
-    """Ensures default employee profiles (Ankur Bag and Sayan Sarkar) exist in the database."""
-    # Ensure Employee 1 is Ankur Bag
+    """Makes sure our default test users are actually in the database."""
+    # make sure employee 1 is Ankur Bag
     employee = db.query(Employee).filter(Employee.employee_id == settings.DEFAULT_EMPLOYEE_ID).first()
     if not employee:
         employee = Employee(
@@ -32,7 +32,7 @@ def get_or_create_default_employee(db: Session) -> Employee:
         db.commit()
         db.refresh(employee)
 
-    # Ensure Employee 2 is Sayan Sarkar
+    # make sure employee 2 is Sayan Sarkar
     employee2 = db.query(Employee).filter(Employee.employee_id == 2).first()
     if not employee2:
         employee2 = Employee(
@@ -48,8 +48,8 @@ def get_or_create_default_employee(db: Session) -> Employee:
 
 def resolve_orphaned_sessions(db: Session):
     """
-    Finds and closes any un-ended state sessions (end_time is NULL) from previous runs.
-    Closes them as 0-duration entries with annotations to avoid inflating active times.
+    Cleans up any sessions that were left hanging when the server crashed or stopped.
+    We just zero them out so they don't mess up our stats.
     """
     orphans = db.query(ActivityLog).filter(ActivityLog.end_time == None).all()
     if orphans:
@@ -71,14 +71,14 @@ def start_new_state_session(
     notes: Optional[str] = None
 ) -> ActivityLog:
     """
-    Transitions the subject's state by:
-      1. Finding and closing the currently open session (setting end_time and duration).
-      2. Inserting a new open session for the new state with tracking scores.
-      3. Triggering a recalculation of daily stats.
+    Moves a person from one state to another:
+      1. wraps up whatever they were just doing.
+      2. starts a new record for what they are doing now.
+      3. updates the daily scoreboard.
     """
     now = datetime.datetime.now()
     
-    # 1. Close open sessions
+    # 1. wrap up any hanging sessions
     open_sessions = db.query(ActivityLog).filter(
         ActivityLog.employee_id == employee_id,
         ActivityLog.end_time == None
@@ -88,7 +88,7 @@ def start_new_state_session(
         sess.end_time = now
         sess.duration_seconds = max(0, int((now - sess.start_time).total_seconds()))
     
-    # 2. Insert new session with scores and reasons
+    # 2. start the new session and log why it happened
     new_log = ActivityLog(
         employee_id=employee_id,
         state=state,
@@ -105,13 +105,13 @@ def start_new_state_session(
     db.commit()
     db.refresh(new_log)
     
-    # 3. Recalculate daily summary for today
+    # 3. refresh the daily stats
     recalculate_daily_summary(db, employee_id, datetime.date.today())
     return new_log
 
 def close_active_session(db: Session, employee_id: int) -> None:
     """
-    Gracefully closes any open state session (e.g., during server shutdown).
+    Tidies up any open sessions when we turn off the server.
     """
     now = datetime.datetime.now()
     open_sessions = db.query(ActivityLog).filter(
@@ -129,17 +129,17 @@ def close_active_session(db: Session, employee_id: int) -> None:
 
 def recalculate_daily_summary(db: Session, employee_id: int, target_date: datetime.date) -> Optional[DailySummary]:
     """
-    Aggregates durations (WORKING, IDLE, ABSENT) for an employee on a specific date.
-    Correctly partitions sessions crossing boundaries and updates the daily_summary table.
+    Tallies up the total time spent in each state for a given day.
+    Also handles the edge cases where a session crosses midnight.
     """
     now = datetime.datetime.now()
     start_of_day = datetime.datetime.combine(target_date, datetime.time.min)
     end_of_day = datetime.datetime.combine(target_date, datetime.time.max)
     
-    # Limit aggregation upper boundary to current time if target date is today
+    # if we're looking at today, only count up to right now
     end_of_time = now if target_date == now.date() else end_of_day
     
-    # Query all sessions overlapping with target date interval
+    # grab all the activity chunks that happened on this day
     logs = db.query(ActivityLog).filter(
         ActivityLog.employee_id == employee_id,
         ActivityLog.start_time <= end_of_time,
@@ -149,7 +149,7 @@ def recalculate_daily_summary(db: Session, employee_id: int, target_date: dateti
     durations = {"WORKING": 0, "IDLE": 0, "ABSENT": 0}
     
     for log in logs:
-        # Calculate overlap segment boundaries
+        # figure out exactly how much of this chunk fits into the day we're looking at
         seg_start = max(log.start_time, start_of_day)
         seg_end = min(log.end_time or now, end_of_time)
         
@@ -162,7 +162,7 @@ def recalculate_daily_summary(db: Session, employee_id: int, target_date: dateti
     a_sec = durations["ABSENT"]
     total_sec = w_sec + i_sec + a_sec
     
-    # Formula: Working Seconds / (Working + Idle + Absent) * 100
+    # productivity is just working time divided by total monitored time
     productivity_score = 0.0
     if total_sec > 0:
         productivity_score = round((w_sec / total_sec) * 100.0, 1)
@@ -209,17 +209,17 @@ def recalculate_daily_summary(db: Session, employee_id: int, target_date: dateti
 
 def get_live_status(db: Session, employee_id: int, live_cv_metrics: dict) -> dict:
     """
-    Builds the real-time operational metrics payload, fetching boundaries,
-    today's aggregated seconds, status durations, and developer diagnostics indicators.
+    Pulls together everything we need for the live dashboard,
+    combining database history with live computer vision metrics.
     """
     employee = db.query(Employee).filter(Employee.employee_id == employee_id).first()
     if not employee:
         return {}
         
-    # Recalculate today's summary to guarantee real-time figures
+    # update the daily stats right now so the dashboard is perfectly accurate
     summary = recalculate_daily_summary(db, employee_id, datetime.date.today())
     
-    # Retrieve latest log record
+    # grab what they are doing at this exact moment
     latest_log = db.query(ActivityLog).filter(
         ActivityLog.employee_id == employee_id
     ).order_by(ActivityLog.start_time.desc()).first()
@@ -236,7 +236,7 @@ def get_live_status(db: Session, employee_id: int, live_cv_metrics: dict) -> dic
         confidence = 0.0
         time_in_state = 0
         
-    # Bounds for the monitored shift
+    # figure out when they started and when we last saw them
     start_of_day = datetime.datetime.combine(datetime.date.today(), datetime.time.min)
     first_log = db.query(ActivityLog).filter(
         ActivityLog.employee_id == employee_id,
@@ -267,7 +267,7 @@ def get_live_status(db: Session, employee_id: int, live_cv_metrics: dict) -> dic
         "last_activity": last_act,
         "total_monitored_time": format_seconds_to_hhmmss(total_sec),
         
-        # Merge diagnostic metrics passed from runtime
+        # mix in the live debug info from the cv engine
         "raw_score": live_cv_metrics.get("raw_score", 0.0),
         "smoothed_score": live_cv_metrics.get("smoothed_score", 0.0),
         "movement_threshold": live_cv_metrics.get("movement_threshold", 0.50),

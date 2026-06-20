@@ -1,6 +1,6 @@
-/* frontend/css/styles.css */
+/* all the pretty styles for our app */
 
-/* Core Variables - Vercel / Linear inspired */
+/* core variables - trying to make it look sleek and modern like linear/vercel */
 :root {
     --bg-color: #0a0a0a;
     --panel-bg: #0a0a0a;
@@ -50,7 +50,7 @@ body {
     gap: 24px;
 }
 
-/* App Header */
+/* the top header bar */
 .app-header {
     display: flex;
     justify-content: space-between;
@@ -144,7 +144,7 @@ body {
     background: var(--color-working);
 }
 
-/* Panels */
+/* the boxes that hold all our content */
 .panel {
     background: var(--panel-bg);
     border: 1px solid var(--border-color);
@@ -174,7 +174,7 @@ body {
     gap: 8px;
 }
 
-/* Metrics Banner */
+/* the big numbers up top */
 .metrics-banner {
     display: grid;
     grid-template-columns: repeat(5, 1fr);
@@ -204,12 +204,12 @@ body {
     letter-spacing: -0.02em;
 }
 
-/* Status Colors */
+/* colors for the different working states */
 #metric-status.status-working { color: var(--color-working); }
 #metric-status.status-idle { color: var(--color-idle); }
 #metric-status.status-absent { color: var(--color-absent); }
 
-/* Layout Grid */
+/* the main grid structure */
 .layout-grid {
     display: grid;
     grid-template-columns: 1.2fr 1fr 1fr;
@@ -229,7 +229,7 @@ body {
 .layout-bottom { grid-column: 1 / -1; }
 .layout-debug { grid-column: 1 / -1; }
 
-/* Live Feed */
+/* the video player box */
 .live-feed-panel {
     height: 100%;
 }
@@ -284,7 +284,7 @@ body {
     background: var(--color-absent);
 }
 
-/* Timeline */
+/* the timeline list in the middle */
 .timeline-panel {
     height: 100%;
 }
@@ -335,7 +335,7 @@ body {
     padding: 40px 0;
 }
 
-/* Chart */
+/* the doughnut chart container */
 .chart-panel {
     flex: 1;
     min-height: 260px;
@@ -354,7 +354,7 @@ body {
     max-width: 180px !important;
 }
 
-/* Summary Details */
+/* the shift summary box on the right */
 .summary-details {
     padding: 8px 16px;
     display: flex;
@@ -383,7 +383,7 @@ body {
     font-weight: 500;
 }
 
-/* Tables */
+/* the big logs table at the bottom */
 .table-container {
     width: 100%;
     overflow-x: auto;
@@ -444,7 +444,7 @@ body {
     padding: 40px !important;
 }
 
-/* Debug Panel */
+/* the dev diagnostics panel */
 .debug-grid {
     display: grid;
     grid-template-columns: repeat(5, 1fr);
@@ -468,7 +468,7 @@ body {
     color: var(--text-main);
 }
 
-/* Scrollbars */
+/* styling the scrollbars so they don't look like ugly default windows scrollbars */
 ::-webkit-scrollbar {
     width: 8px;
     height: 8px;

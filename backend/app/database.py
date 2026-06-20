@@ -2,21 +2,21 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from app.config import settings
 
-# Create engine
-# pool_pre_ping ensures stale connections are recycled gracefully
+# create the engine
+# using pool_pre_ping so it gracefully recycles stale connections instead of blowing up
 engine = create_engine(
     settings.database_url,
     pool_pre_ping=True,
     pool_recycle=3600
 )
 
-# Create session maker
+# spin up our session maker
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Declarative Base
+# the declarative base for our models
 Base = declarative_base()
 
-# Dependency to get db session
+# dependency injection magic to hand out db sessions
 def get_db():
     db = SessionLocal()
     try:

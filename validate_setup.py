@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Verification script for the Employee Activity Monitoring System.
-Checks dependencies, database connectivity, and schemas.
+Quick health check script for the system.
+Makes sure you've got all the python packages and the database is talking to us.
 """
 import sys
 import os
 
-# Adjust path to import from backend
+# tweak the path so we can import stuff from the backend folder
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "backend")))
 
 def check_dependencies():
@@ -45,12 +45,12 @@ def check_database():
         from app.database import engine, SessionLocal
         from app.models import Employee, ActivityLog, DailySummary
         
-        # Test connection
+        # let's see if we can actually connect
         connection = engine.connect()
         print("  [✓] Successfully connected to MySQL server.")
         connection.close()
 
-        # Check schema tables
+        # make sure all the tables we need are actually there
         inspector = inspect(engine)
         existing_tables = inspector.get_table_names()
         required_tables = ["employees", "activity_logs", "daily_summary"]
@@ -64,7 +64,7 @@ def check_database():
                 tables_ok = False
                 
         if tables_ok:
-            # Check if default employee is seeded
+            # just checking if our default test user is in there
             db = SessionLocal()
             try:
                 emp = db.query(Employee).filter(Employee.employee_id == 1).first()

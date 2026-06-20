@@ -11,7 +11,7 @@ class Employee(Base):
     department = Column(String(255), default="Engineering")
     created_at = Column(DateTime, server_default=func.now())
 
-    # Relationships
+    # how this links to other tables
     logs = relationship("ActivityLog", back_populates="employee", cascade="all, delete-orphan")
     summaries = relationship("DailySummary", back_populates="employee", cascade="all, delete-orphan")
 
@@ -32,10 +32,10 @@ class ActivityLog(Base):
     notes = Column(String(255), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
-    # Relationships
+    # tie it back to the employee
     employee = relationship("Employee", back_populates="logs")
 
-    # Indices
+    # speed up queries with these indexes
     __table_args__ = (
         Index("idx_logs_employee_start", "employee_id", "start_time"),
         Index("idx_logs_employee_state", "employee_id", "state"),
@@ -54,10 +54,10 @@ class DailySummary(Base):
     absent_seconds = Column(Integer, default=0)
     productivity_score = Column(Float, default=0.0)
 
-    # Relationships
+    # relationship hooks
     employee = relationship("Employee", back_populates="summaries")
 
-    # Indices and Constraints
+    # indexes so things stay snappy
     __table_args__ = (
         Index("idx_summary_employee_date", "employee_id", "date"),
     )

@@ -5,21 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AuraSense - Operational Activity Monitor</title>
     
-    <!-- Google Fonts -->
+    <!-- fancy google fonts for that premium feel -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     
-    <!-- Chart.js -->
+    <!-- pulling in chart.js so we don't have to draw circles by hand -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
-    <!-- Stylesheet -->
+    <!-- hook up our custom css -->
     <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
     <div class="dashboard-wrapper">
         
-        <!-- Header Bar -->
+        <!-- the top navigation bar -->
         <header class="app-header">
             <div class="header-left">
                 <div class="logo">
@@ -35,7 +35,7 @@
                 <div class="subject-selector-wrapper">
                     <span>Subject:</span>
                     <select id="employeeSelect" class="subject-select">
-                        <!-- Options populated dynamically from DB -->
+                        <!-- javascript will fill these in from the database later -->
                     </select>
                 </div>
                 <div class="connection-status">
@@ -45,7 +45,7 @@
             </div>
         </header>
 
-        <!-- Top Row Metrics Banner -->
+        <!-- the big numbers across the top -->
         <section class="metrics-banner">
             <div class="metric-block" id="block-status">
                 <span class="block-label">Current Status</span>
@@ -69,10 +69,10 @@
             </div>
         </section>
 
-        <!-- Middle & Bottom Layout Grid -->
+        <!-- the main grid where all the fun happens -->
         <div class="layout-grid">
             
-            <!-- Left Side: Live Feed Panel -->
+            <!-- left side: the actual video stream -->
             <div class="layout-left">
                 <div class="panel live-feed-panel">
                     <div class="panel-header">
@@ -89,7 +89,7 @@
                 </div>
             </div>
 
-            <!-- Center: Activity Timeline -->
+            <!-- middle: the timeline of their day -->
             <div class="layout-center">
                 <div class="panel timeline-panel">
                     <div class="panel-header">
@@ -97,7 +97,7 @@
                     </div>
                     <div class="timeline-container">
                         <div class="timeline-list" id="timeline-list">
-                            <!-- Populated dynamically -->
+                            <!-- javascript magic goes here -->
                             <div class="list-empty">
                                 No logged session segments for today.
                             </div>
@@ -106,7 +106,7 @@
                 </div>
             </div>
 
-            <!-- Right: Activity Distribution & Shifts Summary -->
+            <!-- right side: charts and shift totals -->
             <div class="layout-right">
                 <div class="panel chart-panel">
                     <div class="panel-header">
@@ -142,7 +142,7 @@
                 </div>
             </div>
 
-            <!-- Bottom Row: Recent Session logs Table (Spans full width below) -->
+            <!-- bottom: a big table of every session segment -->
             <div class="layout-bottom">
                 <div class="panel logs-panel">
                     <div class="panel-header">
@@ -161,7 +161,7 @@
                                 </tr>
                             </thead>
                             <tbody id="logs-table-body">
-                                <!-- Populated dynamically -->
+                                <!-- javascript magic goes here -->
                                 <tr>
                                     <td colspan="6" class="table-empty">No database records found.</td>
                                 </tr>
@@ -171,7 +171,7 @@
                 </div>
             </div>
 
-            <!-- Diagnostics Debug Panel (Spans full width below table logs) -->
+            <!-- dev panel: all the raw computer vision numbers -->
             <div class="layout-debug">
                 <div class="panel debug-panel">
                     <div class="panel-header">
@@ -202,9 +202,9 @@
                 </div>
             </div>
 
-        </div> <!-- /layout-grid -->
+        </div> <!-- /end of layout grid -->
         
-    </div> <!-- /dashboard-wrapper -->
+    </div> <!-- /end of dashboard wrapper -->
     
     <script src="js/app.js"></script>
 </body>

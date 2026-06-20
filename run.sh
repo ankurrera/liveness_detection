@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# AuraSense - Development Runner & Orchestrator
-# Color output helpers
+# AuraSense - The big script that sets everything up and runs it
+# some pretty colors for the terminal output
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
@@ -12,7 +12,7 @@ echo -e "${BLUE}======================================================${NC}"
 echo -e "${GREEN}    AuraSense - Employee Activity Monitoring System   ${NC}"
 echo -e "${BLUE}======================================================${NC}"
 
-# 1. Start/Verify MySQL Server
+# step 1: make sure mysql is alive and kicking
 echo -e "${YELLOW}[1/4] Checking MySQL status...${NC}"
 if ! pgrep -x "mysqld" > /dev/null; then
     echo -e "${YELLOW}MySQL not running. Starting via systemctl...${NC}"
@@ -22,7 +22,7 @@ else
     echo -e "${GREEN}[✓] MySQL server is already running.${NC}"
 fi
 
-# 2. Database Import
+# step 2: load up our database structure
 echo -e "${YELLOW}[2/4] Applying SQL DDL Schema...${NC}"
 sudo mysql -e "CREATE DATABASE IF NOT EXISTS employee_activity_db;"
 sudo mysql -e "CREATE USER IF NOT EXISTS 'employee_app'@'localhost' IDENTIFIED BY 'aurasense_pass';"
@@ -36,7 +36,7 @@ else
     echo -e "${RED}[✗] Failed to configure MySQL database database connection.${NC}"
 fi
 
-# 3. Running Diagnostics Verification
+# step 3: run a quick health check to make sure python is happy
 echo -e "${YELLOW}[3/4] Running diagnostic verification...${NC}"
 python3 validate_setup.py
 if [ $? -ne 0 ]; then
@@ -44,13 +44,13 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# 4. Launch Server
+# step 4: fire up the fastapi backend
 echo -e "${YELLOW}[4/4] Starting FastAPI Uvicorn Server...${NC}"
 echo -e "${GREEN}Dashboard will be available at: http://localhost:8000/${NC}"
 echo -e "${BLUE}Press Ctrl+C to stop the monitoring system.${NC}"
 echo ""
 
-# Wait a second, and launch dashboard in browser
+# pause for a sec then open the browser automatically
 (sleep 2 && xdg-open http://localhost:8000/) &
 
 cd backend
