@@ -14,10 +14,10 @@ from app.config import settings
 
 router = APIRouter()
 
-# 1. Video Feed MJPEG Stream Endpoint
+# 1. the video pipeline
 @router.get("/video_feed")
 def get_video_feed():
-    """Streams the live webcam / simulated video feed with skeletal overlay and HUD."""
+    """Pipes the live webcam or mock feed straight to the frontend with all the overlays."""
     def frame_generator():
         while True:
             frame_bytes = cv_monitor.latest_frame
@@ -31,7 +31,7 @@ def get_video_feed():
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
 
-# 2. Employees Endpoints
+# 2. stuff for managing employees
 @router.get("/employees", response_model=List[EmployeeResponse])
 def read_employees(db: Session = Depends(get_db)):
     return db.query(Employee).all()
@@ -53,24 +53,24 @@ def read_employee(employee_id: int, db: Session = Depends(get_db)):
 
 @router.get("/active_employee")
 def get_active_employee():
-    """Gets the active employee ID currently being monitored by the CV pipeline."""
+    """Finds out who the computer vision is looking at right now."""
     return {"active_employee_id": cv_monitor.active_employee_id}
 
 @router.post("/active_employee")
 def set_active_employee(employee_id: int, db: Session = Depends(get_db)):
-    """Sets the active employee ID being monitored by the CV pipeline."""
+    """Tells the computer vision to watch someone else."""
     db_employee = db.query(Employee).filter(Employee.employee_id == employee_id).first()
     if not db_employee:
         raise HTTPException(status_code=404, detail="Employee not found")
     cv_monitor.set_active_employee(employee_id)
     return {"status": "success", "active_employee_id": employee_id}
 
-# 3. Activity Endpoints
+# 3. stuff for activity tracking
 @router.get("/activity/live", response_model=LiveStatusResponse)
 def read_live_activity(employee_id: int = settings.DEFAULT_EMPLOYEE_ID, db: Session = Depends(get_db)):
     """
-    Returns the real-time status of the employee, including time spent in current state,
-    today's productivity score, and developer diagnostic metrics.
+    Grabs what the user is doing right this second,
+    plus the current day's score and some behind-the-scenes metrics.
     """
     live_cv_metrics = cv_monitor.get_debug_metrics()
     status_data = get_live_status(db, employee_id, live_cv_metrics)
@@ -85,8 +85,8 @@ def read_activity_history(
     db: Session = Depends(get_db)
 ):
     """
-    Returns chronological state session logs. Calculates and formats durations
-    as HH:MM:SS for active or completed intervals.
+    Gets the history of what they were doing.
+    Also does the math to make the time readable (like HH:MM:SS).
     """
     logs = db.query(ActivityLog).filter(
         ActivityLog.employee_id == employee_id
@@ -95,7 +95,7 @@ def read_activity_history(
     response_logs = []
     now = datetime.datetime.now()
     for log in logs:
-        # Calculate active duration if session segment is currently open
+        # if they're currently in this state, figure out how long it's been going on
         if log.end_time is None:
             dur = int((now - log.start_time).total_seconds())
         else:
@@ -116,14 +116,14 @@ def read_activity_history(
         
     return response_logs
 
-# 4. Analytics Endpoints
+# 4. the analytics and charts stuff
 @router.get("/analytics/daily", response_model=DailySummaryResponse)
 def read_daily_analytics(
     employee_id: int = settings.DEFAULT_EMPLOYEE_ID,
     target_date: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Returns today's daily aggregate metrics with formatted times."""
+    """Rolls up the whole day into nice readable stats."""
     if target_date:
         try:
             parsed_date = datetime.datetime.strptime(target_date, "%Y-%m-%d").date()
@@ -156,11 +156,11 @@ def read_daily_analytics(
 
 @router.get("/analytics/weekly", response_model=List[DailySummaryResponse])
 def read_weekly_analytics(employee_id: int = settings.DEFAULT_EMPLOYEE_ID, db: Session = Depends(get_db)):
-    """Returns daily aggregate metrics for the last 7 days."""
+    """Grabs the stats for the past week so we can chart it."""
     end_date = datetime.date.today()
     start_date = end_date - datetime.timedelta(days=6)
     
-    # Recalculate today's summary to keep it live
+    # make sure today's numbers are fresh before we send them over
     recalculate_daily_summary(db, employee_id, end_date)
 
     summaries = db.query(DailySummary).filter(

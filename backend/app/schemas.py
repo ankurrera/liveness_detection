@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from datetime import datetime, date
 from typing import List, Optional
 
-# Employee Schemas
+# shapes for employee data
 class EmployeeBase(BaseModel):
     name: str
     department: Optional[str] = "Engineering"
@@ -17,7 +17,7 @@ class EmployeeResponse(EmployeeBase):
     class Config:
         from_attributes = True
 
-# Activity Log (Session Segment) Schemas
+# how we track a chunk of activity (a session segment)
 class ActivityLogBase(BaseModel):
     state: str
     start_time: datetime
@@ -33,12 +33,12 @@ class ActivityLogResponse(ActivityLogBase):
     id: int
     employee_id: int
     created_at: datetime
-    duration_formatted: str  # e.g., "00:15:22"
+    duration_formatted: str  # making it pretty like "00:15:22"
 
     class Config:
         from_attributes = True
 
-# Daily Summary Schemas (Seconds-based and formatted)
+# the rolled-up daily stats
 class DailySummaryResponse(BaseModel):
     id: int
     employee_id: int
@@ -55,7 +55,7 @@ class DailySummaryResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# Live Status Schema with diagnostic variables
+# what the frontend needs right now, plus some dev variables
 class LiveStatusResponse(BaseModel):
     employee_id: int
     name: str
@@ -71,7 +71,7 @@ class LiveStatusResponse(BaseModel):
     last_activity: Optional[str] = None   # "HH:MM:SS"
     total_monitored_time: str    # "HH:MM:SS"
     
-    # Diagnostics Debug Parameters
+    # internal debug stuff to see what the math is doing
     raw_score: float
     smoothed_score: float
     movement_threshold: float

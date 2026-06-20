@@ -15,7 +15,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Enable CORS for local development
+# setting up cors so the frontend can talk to us locally without throwing a fit
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,20 +24,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include API Router under /api namespace
+# tuck all the api routes under the /api prefix so it's neat
 app.include_router(api_router, prefix="/api")
 
-# Startup event hook
+# things to do when the server wakes up
 @app.on_event("startup")
 def startup_event():
     print("[Server] Initializing database tables...")
-    # Attempt connection retries in case database server is starting up
+    # let's try connecting to the database a few times in case it's still groggy and waking up
     retries = 5
     while retries > 0:
         try:
             Base.metadata.create_all(bind=engine)
             db = SessionLocal()
-            # Seed default employee
+            # throw in a default employee to start with
             get_or_create_default_employee(db)
             db.close()
             print("[Server] Database connection established and tables validated.")
@@ -52,14 +52,14 @@ def startup_event():
     print("[Server] Starting Computer Vision Monitoring engine...")
     cv_monitor.start()
 
-# Shutdown event hook
+# things to clean up before the server goes to sleep
 @app.on_event("shutdown")
 def shutdown_event():
     print("[Server] Stopping Computer Vision Monitoring engine...")
     cv_monitor.stop()
 
-# Serve static frontend files
-# Note: Mount at bottom so that standard API routes take precedence
+# serve up the frontend html/css/js
+# pro tip: put this at the very end so our api routes don't get swallowed
 frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../frontend"))
 if os.path.exists(frontend_dir):
     app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")

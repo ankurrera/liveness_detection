@@ -1,8 +1,8 @@
--- Create Database
+-- setting up the database from scratch
 CREATE DATABASE IF NOT EXISTS employee_activity_db;
 USE employee_activity_db;
 
--- 1. Employees Table
+-- 1. table for all the folks we are tracking
 CREATE TABLE IF NOT EXISTS employees (
     employee_id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
@@ -10,11 +10,11 @@ CREATE TABLE IF NOT EXISTS employees (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Drop dependent tables if they exist to apply structural updates cleanly
+-- nuke the old tables first so we can apply changes cleanly
 DROP TABLE IF EXISTS daily_summary;
 DROP TABLE IF EXISTS activity_logs;
 
--- 2. Activity Logs Table (Session Segment Based with CV diagnostics)
+-- 2. the meat of the app, storing chunks of activity along with the computer vision debug metrics
 CREATE TABLE activity_logs (
     id INT AUTO_INCREMENT PRIMARY KEY,
     employee_id INT NOT NULL,
@@ -31,12 +31,12 @@ CREATE TABLE activity_logs (
     FOREIGN KEY (employee_id) REFERENCES employees(employee_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Indexes for optimized analytical queries
+-- slap some indexes on so our analytics queries run fast
 CREATE INDEX idx_logs_employee_start ON activity_logs (employee_id, start_time);
 CREATE INDEX idx_logs_employee_state ON activity_logs (employee_id, state);
 CREATE INDEX idx_logs_open_session ON activity_logs (employee_id, end_time);
 
--- 3. Daily Summary Table (Seconds-based)
+-- 3. the daily rolled up stats (just seconds to keep it simple)
 CREATE TABLE daily_summary (
     id INT AUTO_INCREMENT PRIMARY KEY,
     employee_id INT NOT NULL,
@@ -49,5 +49,5 @@ CREATE TABLE daily_summary (
     FOREIGN KEY (employee_id) REFERENCES employees(employee_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Indexes on daily_summary for faster statistics query loading
+-- make loading the stats page snappy
 CREATE INDEX idx_summary_employee_date ON daily_summary (employee_id, date);
